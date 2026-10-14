@@ -8,27 +8,36 @@
 // .agents/rules/ and are never loaded.
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/;
+const NATIVE_TRIGGER_LINE = /^trigger[ \t]*:[ \t]*(?!#)\S/m;
 
 function parseFrontmatter(source, label) {
   const match = source.match(FRONTMATTER_PATTERN);
   if (!match) {
     return null;
   }
-  // A rule that already declares a trigger is Antigravity-native. Detect it
-  // before YAML parsing: native glob rules may hold unquoted `globs: **/*.ts`,
-  // which a strict YAML parser rejects as an alias.
-  if (/^trigger[ \t]*:[ \t]*\S/m.test(match[1])) {
-    return { native: true };
-  }
 
   // Keep YAML loading behind the transform boundary, like the agent adapter:
   // planning must stay free of runtime package dependencies.
-  const frontmatter = require('js-yaml').load(match[1]);
+  let frontmatter;
+  try {
+    frontmatter = require('js-yaml').load(match[1]);
+  } catch (error) {
+    // Antigravity-native glob rules may hold unquoted `globs: **/*.ts`, which
+    // strict YAML rejects as an alias. Leave such rules untouched.
+    if (NATIVE_TRIGGER_LINE.test(match[1])) {
+      return { native: true };
+    }
+    throw error;
+  }
   if (frontmatter === null || frontmatter === undefined) {
     return { frontmatter: {}, body: source.slice(match[0].length) };
   }
   if (typeof frontmatter !== 'object' || Array.isArray(frontmatter)) {
     throw new Error(`Cannot adapt Antigravity rule ${label}: frontmatter must be an object`);
+  }
+  // A rule that already declares a usable trigger is Antigravity-native.
+  if (typeof frontmatter.trigger === 'string' && frontmatter.trigger.trim()) {
+    return { native: true };
   }
 
   return { frontmatter, body: source.slice(match[0].length) };
