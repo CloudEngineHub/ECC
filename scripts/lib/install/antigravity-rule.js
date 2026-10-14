@@ -49,8 +49,9 @@ function adaptAntigravityRule(source, label = '<unknown>') {
   }
 
   const globs = Object.hasOwn(frontmatter, 'paths') ? toGlobList(frontmatter.paths) : [];
+  // Quote globs: a plain YAML scalar cannot start with `*` (alias indicator).
   const lines = globs.length > 0
-    ? ['trigger: glob', `globs: ${globs.join(',')}`]
+    ? ['trigger: glob', `globs: ${JSON.stringify(globs.join(','))}`]
     : ['trigger: always_on'];
 
   if (typeof frontmatter.description === 'string' && frontmatter.description.trim()) {

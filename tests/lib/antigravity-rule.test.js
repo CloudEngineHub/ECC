@@ -7,6 +7,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const yaml = require('js-yaml');
 
 const { adaptAntigravityRule } = require('../../scripts/lib/install/antigravity-rule');
 const { transformInstallContent } = require('../../scripts/lib/install/content-transform');
@@ -29,6 +30,12 @@ function readRule(relativePath) {
   return fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf8');
 }
 
+function frontmatterOf(adapted) {
+  const match = adapted.match(/^---\n([\s\S]*?)\n---\n/);
+  assert.ok(match, 'adapted rule should start with frontmatter');
+  return yaml.load(match[1]);
+}
+
 function runTests() {
   console.log('\n=== Testing Antigravity rule adapter ===\n');
 
@@ -47,18 +54,15 @@ function runTests() {
     const source = readRule('rules/python/coding-style.md');
     const adapted = adaptAntigravityRule(source, 'rules/python/coding-style.md');
 
-    assert.ok(
-      adapted.startsWith('---\ntrigger: glob\nglobs: **/*.py,**/*.pyi\n---\n'),
-      adapted.slice(0, 80)
-    );
-    assert.ok(!/^paths:/m.test(adapted.split('\n---\n')[0]), 'paths should not survive');
+    assert.deepStrictEqual(frontmatterOf(adapted), { trigger: 'glob', globs: '**/*.py,**/*.pyi' });
     assert.ok(adapted.endsWith(source.slice(source.indexOf('\n---\n', 3) + '\n---\n'.length)));
   })) passed++; else failed++;
 
   if (test('accepts a single string path and CRLF line endings', () => {
     const adapted = adaptAntigravityRule('---\r\npaths: "src/**/*.ts"\r\n---\r\n# Rule\r\n');
 
-    assert.strictEqual(adapted, '---\ntrigger: glob\nglobs: src/**/*.ts\n---\n# Rule\r\n');
+    assert.strictEqual(adapted, '---\ntrigger: glob\nglobs: "src/**/*.ts"\n---\n# Rule\r\n');
+    assert.deepStrictEqual(frontmatterOf(adapted), { trigger: 'glob', globs: 'src/**/*.ts' });
   })) passed++; else failed++;
 
   if (test('keeps a description and defaults to always_on without paths', () => {
@@ -103,10 +107,13 @@ function runTests() {
         if (!fileName.endsWith('.md')) continue;
         const relativePath = `rules/${pack.name}/${fileName}`;
         const adapted = adaptAntigravityRule(readRule(relativePath), relativePath);
+        const frontmatter = frontmatterOf(adapted);
         assert.ok(
-          /^---\ntrigger: (always_on|glob\nglobs: \S+)\n/.test(adapted),
+          frontmatter.trigger === 'always_on'
+            || (frontmatter.trigger === 'glob' && typeof frontmatter.globs === 'string' && frontmatter.globs.length > 0),
           `${relativePath} has no Antigravity trigger`
         );
+        assert.ok(!Object.hasOwn(frontmatter, 'paths'), `${relativePath} still carries Claude paths`);
         checked += 1;
       }
     }
