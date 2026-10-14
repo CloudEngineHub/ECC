@@ -81,6 +81,14 @@ function runTests() {
     assert.strictEqual(adaptAntigravityRule(adaptAntigravityRule('# Rule\n')), adaptAntigravityRule('# Rule\n'));
   })) passed++; else failed++;
 
+  if (test('passes native glob rules through, including unquoted globs and its own output', () => {
+    const native = '---\ntrigger: glob\nglobs: **/*.ts,**/*.tsx\n---\n# Rule\n';
+    assert.strictEqual(adaptAntigravityRule(native), native);
+
+    const adapted = adaptAntigravityRule(readRule('rules/python/coding-style.md'));
+    assert.strictEqual(adaptAntigravityRule(adapted), adapted);
+  })) passed++; else failed++;
+
   if (test('rejects non-object frontmatter', () => {
     assert.throws(
       () => adaptAntigravityRule('---\n- one\n- two\n---\n# Rule\n', 'rules/x/bad.md'),

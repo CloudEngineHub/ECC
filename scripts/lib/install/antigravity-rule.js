@@ -14,6 +14,12 @@ function parseFrontmatter(source, label) {
   if (!match) {
     return null;
   }
+  // A rule that already declares a trigger is Antigravity-native. Detect it
+  // before YAML parsing: native glob rules may hold unquoted `globs: **/*.ts`,
+  // which a strict YAML parser rejects as an alias.
+  if (/^trigger[ \t]*:/m.test(match[1])) {
+    return { native: true };
+  }
 
   // Keep YAML loading behind the transform boundary, like the agent adapter:
   // planning must stay free of runtime package dependencies.
@@ -43,10 +49,11 @@ function adaptAntigravityRule(source, label = '<unknown>') {
     return `---\ntrigger: always_on\n---\n${text}`;
   }
 
-  const { frontmatter, body } = parsed;
-  if (Object.hasOwn(frontmatter, 'trigger')) {
+  if (parsed.native) {
     return text;
   }
+
+  const { frontmatter, body } = parsed;
 
   const globs = Object.hasOwn(frontmatter, 'paths') ? toGlobList(frontmatter.paths) : [];
   // Quote globs: a plain YAML scalar cannot start with `*` (alias indicator).
