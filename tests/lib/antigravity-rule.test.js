@@ -99,6 +99,20 @@ function runTests() {
     }
   })) passed++; else failed++;
 
+  if (test('does not treat a blank quoted trigger as native when YAML cannot parse', () => {
+    for (const trigger of ["trigger: ''", 'trigger: ""', "trigger: '  '", "trigger: '' # pending"]) {
+      assert.throws(
+        () => adaptAntigravityRule(`---\n${trigger}\nglobs: **/*.ts\n---\n# Rule\n`),
+        { name: 'YAMLException' },
+        trigger
+      );
+    }
+    for (const trigger of ["trigger: 'glob'", 'trigger: "glob"', 'trigger: glob # scoped']) {
+      const native = `---\n${trigger}\nglobs: **/*.ts\n---\n# Rule\n`;
+      assert.strictEqual(adaptAntigravityRule(native), native, trigger);
+    }
+  })) passed++; else failed++;
+
   if (test('rejects non-object frontmatter', () => {
     assert.throws(
       () => adaptAntigravityRule('---\n- one\n- two\n---\n# Rule\n', 'rules/x/bad.md'),

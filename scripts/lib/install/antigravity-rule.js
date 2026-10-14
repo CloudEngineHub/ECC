@@ -8,7 +8,26 @@
 // .agents/rules/ and are never loaded.
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/;
-const NATIVE_TRIGGER_LINE = /^trigger[ \t]*:[ \t]*(?!#)\S/m;
+const TRIGGER_LINE = /^trigger[ \t]*:(.*)$/m;
+
+// Fallback for frontmatter that strict YAML cannot load: read the trigger
+// line by hand and accept it only when it holds a nonblank value.
+function hasNativeTriggerLine(yamlText) {
+  const match = yamlText.match(TRIGGER_LINE);
+  if (!match) {
+    return false;
+  }
+  let value = match[1].trim();
+  if (value.startsWith('#')) {
+    return false;
+  }
+  value = value.replace(/[ \t]+#.*$/, '');
+  const quoted = value.match(/^(['"])(.*)\1$/);
+  if (quoted) {
+    value = quoted[2];
+  }
+  return value.trim() !== '';
+}
 
 function parseFrontmatter(source, label) {
   const match = source.match(FRONTMATTER_PATTERN);
@@ -24,7 +43,7 @@ function parseFrontmatter(source, label) {
   } catch (error) {
     // Antigravity-native glob rules may hold unquoted `globs: **/*.ts`, which
     // strict YAML rejects as an alias. Leave such rules untouched.
-    if (NATIVE_TRIGGER_LINE.test(match[1])) {
+    if (hasNativeTriggerLine(match[1])) {
       return { native: true };
     }
     throw error;
