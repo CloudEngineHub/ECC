@@ -89,6 +89,13 @@ function runTests() {
     assert.strictEqual(adaptAntigravityRule(adapted), adapted);
   })) passed++; else failed++;
 
+  if (test('does not treat an empty trigger as native', () => {
+    assert.strictEqual(
+      adaptAntigravityRule('---\ntrigger:\npaths:\n  - "**/*.go"\n---\n# Rule\n'),
+      '---\ntrigger: glob\nglobs: "**/*.go"\n---\n# Rule\n'
+    );
+  })) passed++; else failed++;
+
   if (test('rejects non-object frontmatter', () => {
     assert.throws(
       () => adaptAntigravityRule('---\n- one\n- two\n---\n# Rule\n', 'rules/x/bad.md'),

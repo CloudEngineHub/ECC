@@ -17,7 +17,7 @@ function parseFrontmatter(source, label) {
   // A rule that already declares a trigger is Antigravity-native. Detect it
   // before YAML parsing: native glob rules may hold unquoted `globs: **/*.ts`,
   // which a strict YAML parser rejects as an alias.
-  if (/^trigger[ \t]*:/m.test(match[1])) {
+  if (/^trigger[ \t]*:[ \t]*\S/m.test(match[1])) {
     return { native: true };
   }
 
