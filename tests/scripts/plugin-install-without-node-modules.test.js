@@ -121,11 +121,16 @@ function runTests() {
         fs.mkdirSync(data, { recursive: true });
         fs.writeFileSync(path.join(project, 'pubspec.yaml'), 'name: app\ndependencies:\n  flutter:\n    sdk: flutter\n');
 
+        const env = { ...process.env, HOME: home, USERPROFILE: home, ECC_AGENT_DATA_HOME: data,
+          CLAUDE_CONFIG_DIR: data, CLAUDE_PROJECT_DIR: project, XDG_DATA_HOME: path.join(home, '.local', 'share'),
+          ECC_HOMUNCULUS_DIR: path.join(data, 'homunculus'), ECC_SESSION_START_CONTEXT: 'true',
+          ECC_SESSION_START_MAX_CHARS: '8000' };
+        // A NODE_PATH that exposes js-yaml would hide the missing dependency.
+        delete env.NODE_PATH;
+
         const result = spawnSync(process.execPath, [path.join(pluginDir, 'scripts', 'hooks', 'session-start.js')], {
           cwd: project,
-          env: { ...process.env, HOME: home, USERPROFILE: home, ECC_AGENT_DATA_HOME: data,
-            CLAUDE_CONFIG_DIR: data, CLAUDE_PROJECT_DIR: project, XDG_DATA_HOME: path.join(home, '.local', 'share'),
-            ECC_HOMUNCULUS_DIR: path.join(data, 'homunculus'), ECC_SESSION_START_CONTEXT: 'true' },
+          env,
           input: JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup', session_id: 'no-deps', cwd: project }),
           encoding: 'utf8',
           timeout: 15000,
