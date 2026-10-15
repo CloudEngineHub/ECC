@@ -32,7 +32,7 @@ EOF
 
 mkdir -p "$(dirname "$handoff_file")" "$(dirname "$status_file")"
 
-if [[ ! -r "$task_file" ]]; then
+if [[ ! -f "$task_file" || ! -r "$task_file" ]]; then
   write_status "failed" "- Error: task file is missing or unreadable (\`$task_file\`)"
   {
     echo "# Handoff"

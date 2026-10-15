@@ -24,7 +24,7 @@ function test(desc, fn) {
   }
 }
 
-function runWorker({ policy, exitCode = 0, outsideTask = false, relativeTask = false } = {}) {
+function runWorker({ policy, exitCode = 0, outsideTask = false, relativeTask = false, directoryTask = false } = {}) {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-orch-worker-'));
   const binDir = path.join(tempRoot, 'bin');
   const captureFile = path.join(tempRoot, 'args.json');
@@ -34,7 +34,8 @@ function runWorker({ policy, exitCode = 0, outsideTask = false, relativeTask = f
 
   try {
     fs.mkdirSync(binDir);
-    fs.writeFileSync(taskFile, 'Make a focused change.');
+    if (directoryTask) fs.mkdirSync(taskFile);
+    else fs.writeFileSync(taskFile, 'Make a focused change.');
     fs.writeFileSync(path.join(binDir, 'codex'), `#!/usr/bin/env node
 const fs = require('fs');
 const args = process.argv.slice(2);
@@ -94,6 +95,14 @@ test('rejects a readable sibling task before invoking Codex', () => {
   assert.notStrictEqual(result.status, 0);
   assert.strictEqual(result.args, null);
   assert.ok(result.workerStatus.includes('task file outside worktree'));
+});
+
+test('rejects a directory task before invoking Codex', () => {
+  const result = runWorker({ directoryTask: true });
+  assert.notStrictEqual(result.status, 0);
+  assert.strictEqual(result.args, null);
+  assert.ok(result.workerStatus.includes('- State: failed'));
+  assert.ok(result.handoff.includes('Task file is missing or unreadable'));
 });
 
 test('forwards the explicit supported approval policy', () => {
