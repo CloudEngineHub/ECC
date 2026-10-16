@@ -21,6 +21,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const { spawn } = require('child_process');
 const {
   LOOPBACK_HOSTNAMES,
   buildAllowedHostnames,
@@ -1074,6 +1075,25 @@ function listenDashboardServer(
   return dashboardServer.listen(port, resolvedHost, onListening);
 }
 
+// Best-effort auto-open. openBrowser() handles the launcher's async 'error'
+// event so a missing xdg-open/open leaves the server running; the wrapped
+// spawn surfaces that failure so headless users know why no browser opened.
+function openDashboardInBrowser(url) {
+  let reported = false;
+  const reportFailure = (reason) => {
+    if (reported) return;
+    reported = true;
+    console.error(`[ECC] Could not open a browser automatically (${reason}); open ${url} manually.`);
+  };
+  const result = openBrowser(url, process.platform, (command, args, options) => {
+    const child = spawn(command, args, options);
+    child.once('error', err => reportFailure(err && err.code ? err.code : 'spawn-error'));
+    return child;
+  });
+  if (!result.opened) reportFailure(result.reason);
+  return result;
+}
+
 const server = createDashboardServer();
 
 if (require.main === module) {
@@ -1081,9 +1101,7 @@ if (require.main === module) {
     const displayHost = HOST.includes(':') ? `[${HOST}]` : HOST;
     const dashboardUrl = `http://${displayHost}:${PORT}`;
     console.log(`\n    ECC Capabilities  →  ${dashboardUrl}\n`);
-    // Best-effort auto-open. openBrowser() handles the launcher's async
-    // 'error' event, so a missing xdg-open/open leaves the server running.
-    openBrowser(dashboardUrl);
+    openDashboardInBrowser(dashboardUrl);
   } });
 }
 

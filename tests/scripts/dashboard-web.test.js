@@ -1351,6 +1351,7 @@ if (process.platform !== 'win32') {
       await new Promise(resolve => setTimeout(resolve, 500));
       assert.strictEqual(child.exitCode, null, `dashboard exited after listening; stderr: ${stderr}`);
       assert.strictEqual(child.signalCode, null);
+      assert.match(stderr, /Could not open a browser automatically \(ENOENT\)/);
       const response = await requestDashboard(port);
       assert.strictEqual(response.statusCode, 200);
     } finally {
