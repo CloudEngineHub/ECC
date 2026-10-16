@@ -263,7 +263,8 @@ function withMcpMergeExclusions(plan, disabledServers) {
   }
   const filterOperation = operation => (
     operation.kind === 'merge-json' && isMcpConfigPath(operation.destinationPath)
-      && operation.mergePayload !== undefined
+      && isPlainObject(operation.mergePayload)
+      && isPlainObject(operation.mergePayload.mcpServers)
       ? {
         ...operation,
         mergePayload: filterMcpConfig(operation.mergePayload, disabledServers).config,

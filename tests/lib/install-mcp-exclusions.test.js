@@ -251,3 +251,52 @@ test('preview and apply share MCP filtering without changing the plan or other J
   assert.deepEqual(payloadFor(operations, fixture.configPath), expectedMcp);
   assert.deepEqual(payloadFor(operations, ordinaryPath), expectedOrdinary);
 });
+
+for (const [name, payload, expected] of [
+  ['missing mcpServers', { theme: 'dark' }, { userSetting: true, theme: 'dark' }],
+  ['null mcpServers', { mcpServers: null }, { userSetting: true, mcpServers: null }],
+  ['array mcpServers', { mcpServers: [] }, { userSetting: true, mcpServers: [] }],
+  ['scalar mcpServers', { mcpServers: 'custom' }, { userSetting: true, mcpServers: 'custom' }],
+  ['empty mcpServers', { mcpServers: {} }, { userSetting: true, mcpServers: {} }],
+  ['null payload', null, null],
+  ['array payload', ['custom'], ['custom']],
+  ['string payload', 'custom', 'custom'],
+  ['number payload', 42, 42],
+  ['boolean payload', false, false],
+]) {
+  test(`MCP exclusions preserve ordinary JSON merge behavior (${name})`, t => {
+    const fixture = createFixture(t);
+    fixture.writeConfig({ userSetting: true });
+    const originalPlan = fixture.plan();
+    const replacePayload = operations => operations.map(operation => (
+      operation.destinationPath === fixture.configPath
+        ? { ...operation, mergePayload: payload }
+        : operation
+    ));
+    const plan = {
+      ...originalPlan,
+      operations: replacePayload(originalPlan.operations),
+      statePreview: {
+        ...originalPlan.statePreview,
+        operations: replacePayload(originalPlan.statePreview.operations),
+      },
+    };
+    const before = structuredClone(plan);
+    const payloadFor = operations => operations.find(operation => (
+      operation.destinationPath === fixture.configPath
+    )).mergePayload;
+    process.env.ECC_DISABLED_MCPS = 'excluded';
+
+    const preview = previewInstallPlan(plan);
+    assert.deepEqual(payloadFor(preview.operations), payload);
+    assert.deepEqual(payloadFor(preview.statePreview.operations), payload);
+    assert.deepEqual(fixture.readConfig(), { userSetting: true });
+    assert.ok(!fs.existsSync(fixture.statePath));
+    assert.deepEqual(plan, before, 'Preview must not mutate the original plan');
+
+    applyInstallPlan(plan);
+    assert.deepEqual(fixture.readConfig(), expected);
+    assert.deepEqual(payloadFor(readInstallState(fixture.statePath).operations), payload);
+    assert.deepEqual(plan, before, 'Apply must not mutate the original plan');
+  });
+}
