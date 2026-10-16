@@ -30,6 +30,7 @@ const {
 const { normalizeAgentTools } = require('./lib/agent-tools');
 const { readHooksConfig } = require('./lib/hooks-config');
 const { getClaudeDir } = require('./lib/utils');
+const { openBrowser } = require('./lib/platform-launch');
 
 const DEFAULT_HOST = '127.0.0.1';
 
@@ -1080,7 +1081,9 @@ if (require.main === module) {
     const displayHost = HOST.includes(':') ? `[${HOST}]` : HOST;
     const dashboardUrl = `http://${displayHost}:${PORT}`;
     console.log(`\n    ECC Capabilities  →  ${dashboardUrl}\n`);
-    try { const { spawn } = require('child_process'); const p = process.platform; const c = p === 'darwin' ? 'open' : p === 'win32' ? 'start' : 'xdg-open'; if (c === 'start') spawn('cmd', ['/c', 'start', dashboardUrl], { stdio: 'ignore' }); else spawn(c, [dashboardUrl], { stdio: 'ignore' }); } catch { /* best-effort auto-open */ }
+    // Best-effort auto-open. openBrowser() handles the launcher's async
+    // 'error' event, so a missing xdg-open/open leaves the server running.
+    openBrowser(dashboardUrl);
   } });
 }
 
