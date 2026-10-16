@@ -102,7 +102,8 @@ test('rejects a directory task before invoking Codex', () => {
   assert.notStrictEqual(result.status, 0);
   assert.strictEqual(result.args, null);
   assert.ok(result.workerStatus.includes('- State: failed'));
-  assert.ok(result.handoff.includes('Task file is missing or unreadable'));
+  assert.ok(result.handoff.includes('Task file is missing, unreadable, or not a regular file'));
+  assert.ok(result.workerStatus.includes('task file is missing, unreadable, or not a regular file'));
 });
 
 test('forwards the explicit supported approval policy', () => {
@@ -149,11 +150,11 @@ test('fails fast for an unreadable task file and records failure artifacts', () 
 
     assert.ok(statusContent.includes('- State: failed'), 'Status file should record the failure state');
     assert.ok(
-      statusContent.includes('task file is missing or unreadable'),
+      statusContent.includes('task file is missing, unreadable, or not a regular file'),
       'Status file should explain the task-file failure'
     );
     assert.ok(
-      handoffContent.includes('Task file is missing or unreadable'),
+      handoffContent.includes('Task file is missing, unreadable, or not a regular file'),
       'Handoff file should explain the task-file failure'
     );
   } finally {
