@@ -143,7 +143,9 @@ function createFixture() {
 const fixture = createFixture();
 
 function runDetector({ pluginRoot, home, cwd }) {
-  const block = blockContaining(readSkill('tdd-workflow'), 'setup-package-manager.js --detect');
+  const block = blockContaining(
+    readSkill('tdd-workflow'),
+    'node "$ECC_ROOT/scripts/setup-package-manager.js" --detect');
   const env = { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: '' };
   if (pluginRoot) {
     env.CLAUDE_PLUGIN_ROOT = pluginRoot;
