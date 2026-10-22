@@ -6,6 +6,8 @@ const DEFAULT_MAX_STDIN = 1024 * 1024;
 // Stay below the shortest per-hook timeout in hooks/hooks.json (5 s) so a
 // stalled stdin is settled by the reader, not by the harness killing the hook.
 const DEFAULT_STDIN_IDLE_TIMEOUT_MS = 3000;
+// setTimeout fires after 1 ms for any delay above this, so clamp to it.
+const MAX_STDIN_IDLE_TIMEOUT_MS = 2 ** 31 - 1;
 
 function resolveMaxStdin(value, options = {}) {
   const writeDiagnostic = options.writeDiagnostic || (() => {});
@@ -38,6 +40,12 @@ function resolveStdinIdleTimeout(value, options = {}) {
     );
     return DEFAULT_STDIN_IDLE_TIMEOUT_MS;
   }
+  if (parsed > MAX_STDIN_IDLE_TIMEOUT_MS) {
+    writeDiagnostic(
+      `[Hook] ECC_HOOK_INPUT_IDLE_TIMEOUT_MS exceeds the ${MAX_STDIN_IDLE_TIMEOUT_MS} ms timer maximum; clamping to it\n`
+    );
+    return MAX_STDIN_IDLE_TIMEOUT_MS;
+  }
   return parsed;
 }
 
@@ -54,11 +62,11 @@ function isCompleteJsonObject(text) {
 
 function readStdinRaw(stream = process.stdin, options = {}) {
   const maxStdin = options.maxStdin || DEFAULT_MAX_STDIN;
-  const idleTimeoutMs = options.idleTimeoutMs === undefined
-    ? resolveStdinIdleTimeout(process.env.ECC_HOOK_INPUT_IDLE_TIMEOUT_MS)
-    : options.idleTimeoutMs;
   const writeDiagnostic = options.writeDiagnostic
     || (stream === process.stdin ? message => process.stderr.write(message) : () => {});
+  const idleTimeoutMs = options.idleTimeoutMs === undefined
+    ? resolveStdinIdleTimeout(process.env.ECC_HOOK_INPUT_IDLE_TIMEOUT_MS, { writeDiagnostic })
+    : options.idleTimeoutMs;
   const decoder = new StringDecoder('utf8');
   let raw = '';
   let acceptedBytes = 0;

@@ -251,8 +251,11 @@ async function runTests() {
       assert.strictEqual(resolveStdinIdleTimeout('0'), 0);
       assert.strictEqual(resolveStdinIdleTimeout('-1', { writeDiagnostic }), DEFAULT_STDIN_IDLE_TIMEOUT_MS);
       assert.strictEqual(resolveStdinIdleTimeout('soon', { writeDiagnostic }), DEFAULT_STDIN_IDLE_TIMEOUT_MS);
-      assert.strictEqual(diagnostics.length, 2);
+      // setTimeout would fire after 1 ms for a larger delay, so it is clamped.
+      assert.strictEqual(resolveStdinIdleTimeout('9999999999', { writeDiagnostic }), 2 ** 31 - 1);
+      assert.strictEqual(diagnostics.length, 3);
       assert.match(diagnostics[0], /ECC_HOOK_INPUT_IDLE_TIMEOUT_MS/);
+      assert.match(diagnostics[2], /clamping/);
     })
   )
     passed++;
