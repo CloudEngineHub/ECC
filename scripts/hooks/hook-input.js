@@ -31,9 +31,11 @@ function resolveMaxStdin(value, options = {}) {
 
 function resolveStdinIdleTimeout(value, options = {}) {
   const writeDiagnostic = options.writeDiagnostic || (() => {});
-  if (value === undefined || value === '') return DEFAULT_STDIN_IDLE_TIMEOUT_MS;
+  // Number('  ') is 0, which would silently disable the deadline.
+  const text = value === undefined ? '' : String(value).trim();
+  if (text === '') return DEFAULT_STDIN_IDLE_TIMEOUT_MS;
 
-  const parsed = Number(value);
+  const parsed = Number(text);
   if (!Number.isSafeInteger(parsed) || parsed < 0) {
     writeDiagnostic(
       '[Hook] ECC_HOOK_INPUT_IDLE_TIMEOUT_MS must be a non-negative safe integer; using the 3000 ms default\n'
@@ -54,7 +56,7 @@ function resolveStdinIdleTimeout(value, options = {}) {
 function isCompleteJsonObject(text) {
   try {
     const parsed = JSON.parse(text);
-    return parsed !== null && typeof parsed === 'object';
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed);
   } catch {
     return false;
   }

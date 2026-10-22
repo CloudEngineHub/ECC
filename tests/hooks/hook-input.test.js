@@ -18,7 +18,9 @@ const { run: runConfigProtection } = require('../../scripts/hooks/config-protect
 const TEST_STDIN_LIMIT = 1024;
 const STREAM_SETTLEMENT_TIMEOUT_MS = 500;
 const TEST_IDLE_TIMEOUT_MS = 50;
-const PRE_BASH_DISPATCHER = path.join(__dirname, '..', '..', 'scripts', 'hooks', 'pre-bash-dispatcher.js');
+const HOOKS_DIR = path.join(__dirname, '..', '..', 'scripts', 'hooks');
+const PRE_BASH_DISPATCHER = path.join(HOOKS_DIR, 'pre-bash-dispatcher.js');
+const BASH_HOOK_DISPATCHER = path.join(HOOKS_DIR, 'bash-hook-dispatcher.js');
 
 async function test(name, fn) {
   try {
@@ -90,6 +92,36 @@ function readFromHeldOpenStream(chunks, options = {}) {
   });
   for (const chunk of chunks) stream.write(chunk);
   return { stream, resultPromise };
+}
+
+// Spawn a hook entry point, write a partial request, and never close stdin.
+// Resolve on 'close' so stdout and stderr are fully drained before asserting.
+async function runWithHeldOpenStdin(args, partialInput) {
+  const child = spawn(process.execPath, args, {
+    env: { ...process.env, ECC_HOOK_INPUT_IDLE_TIMEOUT_MS: '100', ECC_HOOK_PROFILE: 'standard' },
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', chunk => {
+    stdout += chunk;
+  });
+  child.stderr.on('data', chunk => {
+    stderr += chunk;
+  });
+  child.stdin.on('error', () => {});
+  child.stdin.write(partialInput);
+  try {
+    const exitCode = await settleWithin(
+      new Promise(resolve => child.once('close', code => resolve(code))),
+      5000,
+      args.map(arg => path.basename(arg)).join(' ')
+    );
+    return { exitCode, stdout, stderr };
+  } finally {
+    child.stdin.destroy();
+    child.kill();
+  }
 }
 
 async function runTests() {
@@ -191,6 +223,17 @@ async function runTests() {
   else failed++;
 
   if (
+    await test('held-open stream with a JSON array settles as truncated', async () => {
+      const { resultPromise } = readFromHeldOpenStream(['[]']);
+      const result = await settleWithin(resultPromise, STREAM_SETTLEMENT_TIMEOUT_MS, 'readStdinRaw');
+
+      assert.deepStrictEqual(result, { raw: '[]', truncated: true });
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
     await test('a complete JSON object past the byte cap stays truncated on the idle deadline', async () => {
       const input = JSON.stringify({ padding: 'x'.repeat(TEST_STDIN_LIMIT) });
       const { resultPromise } = readFromHeldOpenStream([input]);
@@ -249,6 +292,8 @@ async function runTests() {
       assert.strictEqual(resolveStdinIdleTimeout(''), DEFAULT_STDIN_IDLE_TIMEOUT_MS);
       assert.strictEqual(resolveStdinIdleTimeout('750'), 750);
       assert.strictEqual(resolveStdinIdleTimeout('0'), 0);
+      assert.strictEqual(resolveStdinIdleTimeout('  '), DEFAULT_STDIN_IDLE_TIMEOUT_MS);
+      assert.strictEqual(resolveStdinIdleTimeout(' 750 '), 750);
       assert.strictEqual(resolveStdinIdleTimeout('-1', { writeDiagnostic }), DEFAULT_STDIN_IDLE_TIMEOUT_MS);
       assert.strictEqual(resolveStdinIdleTimeout('soon', { writeDiagnostic }), DEFAULT_STDIN_IDLE_TIMEOUT_MS);
       // setTimeout would fire after 1 ms for a larger delay, so it is clamped.
@@ -261,32 +306,23 @@ async function runTests() {
     passed++;
   else failed++;
 
-  if (
-    await test('pre-bash dispatcher exits fail closed when stdin is never closed', async () => {
-      const child = spawn(process.execPath, [PRE_BASH_DISPATCHER], {
-        env: { ...process.env, ECC_HOOK_INPUT_IDLE_TIMEOUT_MS: '100', ECC_HOOK_PROFILE: 'standard' },
-        stdio: ['pipe', 'ignore', 'pipe']
-      });
-      let stderr = '';
-      child.stderr.on('data', chunk => {
-        stderr += chunk;
-      });
-      child.stdin.write('{"tool_name":"Bash","tool_input":{');
-      const exitCode = await settleWithin(
-        new Promise(resolve => child.once('exit', code => resolve(code))),
-        5000,
-        'pre-bash-dispatcher'
-      ).finally(() => {
-        child.stdin.destroy();
-        child.kill();
-      });
+  for (const [label, args, expectedExit, diagnostic] of [
+    ['pre-bash dispatcher', [PRE_BASH_DISPATCHER], 2, /stdin stayed open without EOF for 100 ms/],
+    ['bash-hook-dispatcher pre', [BASH_HOOK_DISPATCHER, 'pre'], 2, /incomplete stdin for bash-hook-dispatcher pre; blocking/],
+    ['bash-hook-dispatcher post', [BASH_HOOK_DISPATCHER, 'post'], 0, /incomplete stdin for bash-hook-dispatcher post; skipping/]
+  ]) {
+    if (
+      await test(`${label} exits with ${expectedExit} when stdin is never closed`, async () => {
+        const { exitCode, stdout, stderr } = await runWithHeldOpenStdin(args, '{"tool_name":"Bash","tool_input":{');
 
-      assert.strictEqual(exitCode, 2);
-      assert.match(stderr, /stdin stayed open without EOF for 100 ms/);
-    })
-  )
-    passed++;
-  else failed++;
+        assert.strictEqual(exitCode, expectedExit);
+        assert.strictEqual(stdout, '');
+        assert.match(stderr, diagnostic);
+      })
+    )
+      passed++;
+    else failed++;
+  }
 
   console.log(`\nPassed: ${passed}`);
   console.log(`Failed: ${failed}\n`);

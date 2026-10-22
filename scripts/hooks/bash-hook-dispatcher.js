@@ -171,7 +171,17 @@ async function main() {
   const mode = process.argv[2];
   // The shared reader also settles on close and on an idle deadline, so a
   // parent that never closes stdin cannot hang the dispatcher (#3665).
-  const { raw } = await readStdinRaw(process.stdin, { maxStdin: MAX_STDIN });
+  const { raw, truncated } = await readStdinRaw(process.stdin, { maxStdin: MAX_STDIN });
+  if (truncated) {
+    // Safety hooks cannot inspect a partial request, so pre-Bash fails closed.
+    // Post-Bash has nothing left to block and must not echo a partial payload.
+    const blocking = mode !== 'post';
+    process.stderr.write(
+      `[Hook] incomplete stdin for bash-hook-dispatcher ${blocking ? 'pre' : 'post'}; ` +
+        (blocking ? 'blocking because safety checks require the complete request\n' : 'skipping post-Bash hooks\n')
+    );
+    process.exit(blocking ? 2 : 0);
+  }
 
   const result = mode === 'post'
     ? runPostBash(raw)

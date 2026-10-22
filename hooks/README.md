@@ -135,7 +135,7 @@ export ECC_HOOK_INPUT_MAX_BYTES=524288
 # caller never closes stdin (default: 3000; 0 disables the deadline).
 # Input that is not yet a complete JSON object is treated as incomplete, so
 # fail-closed safety hooks block instead of hanging until the harness kills them.
-export ECC_HOOK_INPUT_IDLE_TIMEOUT_MS=5000
+export ECC_HOOK_INPUT_IDLE_TIMEOUT_MS=1500
 
 # Disable only GateGuard during setup or recovery
 export ECC_GATEGUARD=off
