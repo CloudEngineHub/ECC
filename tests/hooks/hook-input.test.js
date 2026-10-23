@@ -96,9 +96,17 @@ function readFromHeldOpenStream(chunks, options = {}) {
 
 // Spawn a hook entry point, write the input, and never close stdin.
 // Resolve on 'close' so stdout and stderr are fully drained before asserting.
+// Pin the hook flags so a caller's ECC_HOOKS_ENABLED or ECC_DISABLED_HOOKS
+// cannot switch off the hooks these cases assert on.
 async function runWithHeldOpenStdin(args, input) {
   const child = spawn(process.execPath, args, {
-    env: { ...process.env, ECC_HOOK_INPUT_IDLE_TIMEOUT_MS: '100', ECC_HOOK_PROFILE: 'standard' },
+    env: {
+      ...process.env,
+      ECC_HOOK_INPUT_IDLE_TIMEOUT_MS: '100',
+      ECC_HOOK_PROFILE: 'standard',
+      ECC_HOOKS_ENABLED: 'true',
+      ECC_DISABLED_HOOKS: ''
+    },
     stdio: ['pipe', 'pipe', 'pipe']
   });
   let stdout = '';
