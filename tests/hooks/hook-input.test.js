@@ -94,9 +94,9 @@ function readFromHeldOpenStream(chunks, options = {}) {
   return { stream, resultPromise };
 }
 
-// Spawn a hook entry point, write a partial request, and never close stdin.
+// Spawn a hook entry point, write the input, and never close stdin.
 // Resolve on 'close' so stdout and stderr are fully drained before asserting.
-async function runWithHeldOpenStdin(args, partialInput) {
+async function runWithHeldOpenStdin(args, input) {
   const child = spawn(process.execPath, args, {
     env: { ...process.env, ECC_HOOK_INPUT_IDLE_TIMEOUT_MS: '100', ECC_HOOK_PROFILE: 'standard' },
     stdio: ['pipe', 'pipe', 'pipe']
@@ -110,7 +110,7 @@ async function runWithHeldOpenStdin(args, partialInput) {
     stderr += chunk;
   });
   child.stdin.on('error', () => {});
-  child.stdin.write(partialInput);
+  child.stdin.write(input);
   try {
     const exitCode = await settleWithin(
       new Promise(resolve => child.once('close', code => resolve(code))),
@@ -323,6 +323,23 @@ async function runTests() {
       passed++;
     else failed++;
   }
+
+  if (
+    await test('bash-hook-dispatcher pre still runs safety hooks on a complete request when stdin is never closed', async () => {
+      const input = JSON.stringify({
+        tool_name: 'Bash',
+        tool_input: { command: 'git commit --no-verify -m "x"' }
+      });
+      const { exitCode, stdout, stderr } = await runWithHeldOpenStdin([BASH_HOOK_DISPATCHER, 'pre'], input);
+
+      assert.strictEqual(exitCode, 2);
+      assert.strictEqual(stdout, '');
+      assert.match(stderr, /--no-verify flag is not allowed/);
+      assert.doesNotMatch(stderr, /incomplete stdin/);
+    })
+  )
+    passed++;
+  else failed++;
 
   console.log(`\nPassed: ${passed}`);
   console.log(`Failed: ${failed}\n`);
