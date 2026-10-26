@@ -123,6 +123,10 @@ Current corpus:
   expected-output comparisons, representative repository/commit histories, and
   regression commands before deep-analysis behavior can be promoted.
 
+- `public-feedback-goal-fidelity`: compares a shortened draft with the chosen
+  outcome and input/process/result chain, preserving verification limits and
+  separating optional alternatives. Decisions are illustrative.
+
 ## ECC Tools Mapping
 
 ECC Tools already flags missing RAG/evaluator evidence for retrieval,
