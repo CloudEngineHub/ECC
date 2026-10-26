@@ -61,3 +61,23 @@ def test_managed_provider_does_not_show_self_host_compute_notice(capsys):
     print_self_host_compute_notice("openai")
 
     assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("color_name", SELECTOR.Color.__members__)
+def test_color_strings_preserve_ansi_values(color_name: str) -> None:
+    color = SELECTOR.Color[color_name]
+
+    assert str(color) == color.value
+    assert f"{color}" == color.value
+
+
+def test_banner_prints_ansi_colors_instead_of_enum_names(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    SELECTOR.print_banner()
+
+    output = capsys.readouterr().out
+    assert output.startswith("\033[96m\n")
+    assert "LLM Provider Selector" in output
+    assert output.endswith("\033[0m\n")
+    assert "Color." not in output
