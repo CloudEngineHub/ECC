@@ -409,6 +409,53 @@ test('deep analyzer evidence scenario rejects no-corpus analyzer changes', () =>
   assert.ok(playbook.includes('Deep Analyzer Evidence'));
 });
 
+test('public feedback goal fidelity keeps automation and the artifact promotion chain', () => {
+  const scenario = readFixtureJson('public-feedback-goal-fidelity/scenario.json');
+  const trace = readFixtureJson('public-feedback-goal-fidelity/trace.json');
+  const report = readFixtureJson('public-feedback-goal-fidelity/report.json');
+  const verifier = readFixtureJson('public-feedback-goal-fidelity/verifier-result.json');
+  const playbook = read('examples/evaluator-rag-prototype/public-feedback-goal-fidelity/candidate-playbook.md');
+
+  assert.strictEqual(scenario.scenario_id, 'public-feedback-goal-fidelity');
+  assert.strictEqual(scenario.schema_version, 'ecc.evaluator-rag.scenario.v1');
+  assert.strictEqual(scenario.mode, 'read_only_prototype');
+  for (const [artifact, kind] of [[trace, 'trace'], [report, 'report'], [verifier, 'verifier']]) {
+    assert.strictEqual(artifact.schema_version, `ecc.evaluator-rag.${kind}.v1`);
+    assert.strictEqual(artifact.scenario_id, scenario.scenario_id);
+    assert.strictEqual(artifact.read_only, true);
+    assert.strictEqual(artifact.run_id, trace.run_id);
+  }
+  assert.strictEqual(trace.illustrative, true);
+  assert.strictEqual(report.result, 'illustrative_expected_result');
+  assert.strictEqual(verifier.evaluation_status, 'illustrative_expected_decisions_not_historical_reproduction');
+
+  for (const phrase of ['automated', 'incoming sources', 'intermediary tool layer', 'prepared result', 'sustained throughput', 'remain to be verified']) {
+    assert.ok(scenario.inputs.accepted_draft.includes(phrase), `Accepted draft lost ${phrase}`);
+  }
+  assert.ok(scenario.inputs.rejected_draft.includes('for a person'));
+  assert.ok(scenario.forbidden_actions.includes('publishing feedback from this read-only evaluator'));
+  assert.ok(scenario.forbidden_actions.includes('silently replacing OUTCOME_A with human-assisted OUTCOME_B'));
+
+  const accepted = verifier.candidates.find(candidate => candidate.candidate_id === 'preserved-outcome-and-chain');
+  const rejected = verifier.candidates.find(candidate => candidate.candidate_id === 'silent-human-assisted-substitution');
+  assert.ok(accepted, 'Missing goal-preserving candidate');
+  assert.ok(rejected, 'Missing human-assisted substitution candidate');
+  assert.strictEqual(accepted.decision, 'accepted');
+  assert.strictEqual(rejected.decision, 'rejected');
+  assert.strictEqual(verifier.promoted_candidate_id, accepted.candidate_id);
+  assert.strictEqual(report.recommended_next_action.candidate_id, accepted.candidate_id);
+  const proposal = trace.events.find(event => event.phase === 'proposal');
+  assert.ok(proposal, 'Missing proposal event');
+  assert.deepStrictEqual(proposal.candidate_ids, [accepted.candidate_id, rejected.candidate_id]);
+  const promotion = trace.events.find(event => event.phase === 'promotion');
+  assert.ok(promotion, 'Missing promotion event');
+  assert.strictEqual(promotion.promoted_candidate_id, accepted.candidate_id);
+  assert.ok(playbook.includes(`Candidate id: \`${accepted.candidate_id}\``));
+  for (const rule of ['INPUTS -> PROCESS -> RESULT', 'must not silently replace automation', 'preservation remains unverified', 'node tests/docs/evaluator-rag-prototype.test.js']) {
+    assert.ok(playbook.includes(rule), `Missing goal-fidelity playbook rule: ${rule}`);
+  }
+});
+
 if (failed > 0) {
   console.log(`\nFailed: ${failed}`);
   process.exit(1);

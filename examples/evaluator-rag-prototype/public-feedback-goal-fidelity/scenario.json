@@ -25,7 +25,7 @@
       "RESULT: final prepared result, with sustained throughput as the purpose"
     ],
     "constraint": "Describe the requested capability, not a claim that it is implemented. Preserve genuine feasibility and verification limits.",
-    "accepted_draft": "Request an end-to-end flow from incoming sources through the intermediary tool layer to a prepared result, supporting sustained throughput. Implementation and feasibility remain to be verified.",
+    "accepted_draft": "Request an end-to-end automated flow from incoming sources through the intermediary tool layer to a prepared result, supporting sustained throughput. Implementation and feasibility remain to be verified.",
     "rejected_draft": "Request a convenient helper that prepares suggestions and leaves routine exceptions for a person."
   },
   "retrieval_questions": [
