@@ -2114,6 +2114,10 @@ node scripts/codex/check-plugin-cache.js
 ```
 
 If it reports unresolved parent references, refresh the native cache with `codex plugin marketplace upgrade ecc`, run `codex plugin add ecc@ecc` again, and restart Codex. Registration in `codex plugin list` confirms the marketplace entry, while the cache check verifies that the installed manifest can resolve its skills, MCP configuration, and assets. Use `bash scripts/sync-ecc-to-codex.sh` only when you intentionally need the legacy copied-configuration compatibility path.
+
+If Codex 0.164.0 reports `unsupported plugin entry type` after you install hook
+dependencies into the cache, see the [cache-local runtime dependency procedure](.codex-plugin/README.md#runtime-dependencies-and-codex-01640-cache-checks).
+It avoids npm executable symlinks without disabling Codex's hook trust checks.
 </details>
 
 More answers: [TROUBLESHOOTING.md](TROUBLESHOOTING.md) covers memory, hooks, installation, performance, and common error messages. [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) tracks workarounds for open Claude Code bugs.

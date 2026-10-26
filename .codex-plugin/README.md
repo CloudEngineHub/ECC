@@ -77,6 +77,46 @@ Once the cached skills are available, invoke `$configure-ecc` inside Codex for
 ECC's guided configuration. Installing the plugin again is idempotent and does
 not create a second scope or duplicate hook registration.
 
+## Runtime dependencies and Codex 0.164.0 cache checks
+
+Native marketplace installation copies ECC's source; it does not run `npm ci`
+for its hook dependencies. If a hook reports a missing runtime package, first
+check the active ECC cache directory printed by
+`node scripts/codex/check-plugin-cache.js`. Do not install into a different
+cached version or use the deprecated sync script to repair the native plugin.
+
+Codex 0.164.0 can reject a plugin after a normal dependency install with
+`unsupported plugin entry type ... node_modules/.bin/js-yaml`. npm normally
+creates executable symlinks in `.bin`; that Codex version's hook fingerprint
+walker accepts only directories and regular files. See
+[ECC #3742](https://github.com/affaan-m/ECC/issues/3742) and the
+[Codex fingerprint implementation](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/hooks/src/engine/plugin_fingerprint.rs).
+
+For an explicitly chosen cache-local dependency install, use npm's
+[`--no-bin-links`](https://docs.npmjs.com/cli/v11/commands/npm-ci#bin-links)
+option to install the runtime packages without creating executable links:
+
+```bash
+# Set this to the active ECC plugin root reported by the cache check.
+ECC_PLUGIN_CACHE=/absolute/path/to/active/ecc/cache
+cd "$ECC_PLUGIN_CACHE"
+npm ci --omit=dev --ignore-scripts --no-audit --no-fund --no-bin-links
+node -e "require('js-yaml'); require('@iarna/toml'); require('ajv'); require('sql.js'); require('zod')"
+```
+
+The cache root must contain ECC's `package.json` and `package-lock.json`.
+`npm ci` replaces its dependency tree; this opt-in command is not part of the
+default Codex installer. The final command checks Node package resolution, not
+Codex hook execution. Executable shortcuts in `node_modules/.bin` are
+intentionally unavailable; ECC hooks load these packages through Node.
+
+Restart Codex, review the updated hook definitions in `/hooks`, and verify a
+new session's actual hook result. Do not disable fingerprint or trust checks.
+This addresses npm-generated executable links, not every possible unsupported
+cache entry or the upstream Codex defect. A marketplace refresh can replace
+cache-local changes; recheck the active version before applying the command
+again.
+
 ## Native plugin versus legacy managed sync
 
 The commands above are the native Codex plugin path. The deprecated legacy managed sync
