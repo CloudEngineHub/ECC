@@ -25,5 +25,9 @@
       ]
     }
   ],
-  "promoted_candidate_id": "bounded-event-summary"
+  "promoted_candidate_id": "bounded-event-summary",
+  "rollback": {
+    "current_run": "Not applicable: No connector state is changed by this read-only illustrative selection.",
+    "future_extension": "If later implemented, revert the summary extension and its query/configuration changes to restore the existing diagnostics paths; verify connection, access and per-request event behavior before redeployment."
+  }
 }

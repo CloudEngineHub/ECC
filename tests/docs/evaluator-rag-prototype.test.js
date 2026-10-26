@@ -409,6 +409,65 @@ test('deep analyzer evidence scenario rejects no-corpus analyzer changes', () =>
   assert.ok(playbook.includes('Deep Analyzer Evidence'));
 });
 
+test('connector gap artifacts share identity and preserve read-only scope', () => {
+  const scenario = readFixtureJson('connector-diagnostics-gap/scenario.json');
+  assert.strictEqual(scenario.scenario_id, 'connector-diagnostics-gap');
+  assert.strictEqual(scenario.mode, 'read_only_prototype');
+  for (const [file, schema] of [
+    ['trace.json', 'trace'], ['report.json', 'report'], ['verifier-result.json', 'verifier']
+  ]) {
+    const artifact = readFixtureJson(`connector-diagnostics-gap/${file}`);
+    assert.strictEqual(artifact.schema_version, `ecc.evaluator-rag.${schema}.v1`);
+    assert.strictEqual(artifact.scenario_id, scenario.scenario_id);
+    assert.strictEqual(artifact.run_id, 'illustrative-connector-gap');
+    assert.strictEqual(artifact.read_only, true);
+  }
+  assert.strictEqual(scenario.schema_version, 'ecc.evaluator-rag.scenario.v1');
+});
+
+test('connector gap decisions reject unsupported monitors and preserve uncertainty', () => {
+  const scenario = readFixtureJson('connector-diagnostics-gap/scenario.json');
+  const trace = readFixtureJson('connector-diagnostics-gap/trace.json');
+  const verifier = readFixtureJson('connector-diagnostics-gap/verifier-result.json');
+  const playbook = read('examples/evaluator-rag-prototype/connector-diagnostics-gap/candidate-playbook.md');
+  const accepted = verifier.candidates.find(candidate => candidate.candidate_id === 'bounded-event-summary');
+  const rejected = verifier.candidates.find(candidate => candidate.candidate_id === 'new-monitor-without-inventory');
+  assert.ok(accepted, 'Missing bounded summary candidate');
+  assert.ok(rejected, 'Missing unsupported monitor candidate');
+  assert.strictEqual(accepted.decision, 'accepted');
+  assert.strictEqual(rejected.decision, 'rejected');
+  assert.strictEqual(verifier.promoted_candidate_id, accepted.candidate_id);
+  assert.ok(trace.events.some(event => event.promoted_candidate_id === accepted.candidate_id));
+  assert.strictEqual(trace.illustrative, true);
+  assert.strictEqual(verifier.evaluation_status, 'illustrative_expected_decisions_not_executed_connector_checks');
+  assert.ok(accepted.reasons.includes('Keeps retention and deployed settings unknown until checked'));
+  assert.ok(rejected.reasons.includes('Infers absent capability from an unavailable settings channel'));
+  assert.ok(scenario.forbidden_actions.includes('treating unavailable research as proof of missing capability'));
+  assert.ok(scenario.forbidden_actions.includes('claiming the reported incident is a reproduced ECC defect'));
+  assert.ok(scenario.forbidden_actions.includes('deploying a background monitor from this evaluator'));
+  assert.ok(scenario.acceptance_gates.includes('state the observed limitation separately from unknown settings'));
+  assert.ok(playbook.includes('If research is unavailable, preserve the uncertainty and next targeted read'));
+  assert.ok(playbook.includes('Do not deploy components or change connector configuration'));
+});
+
+test('connector report records unscored fixture coverage and verifier rollback', () => {
+  const report = readFixtureJson('connector-diagnostics-gap/report.json');
+  const verifier = readFixtureJson('connector-diagnostics-gap/verifier-result.json');
+  assert.strictEqual(report.scoring.status, 'not_performed');
+  assert.strictEqual(report.scoring.scores, null);
+  assert.strictEqual(report.evidence_coverage.kind, 'synthetic_fixture_only');
+  assert.deepStrictEqual(report.evidence_coverage.sources, [
+    'scenario.json#/inputs/inspected_capabilities',
+    'scenario.json#/inputs/unavailable_channels',
+    'trace.json#/events',
+    'candidate-playbook.md#worked-comparison'
+  ]);
+  assert.ok(report.evidence_coverage.gaps.includes('Event retention and deployed settings are unknown.'));
+  assert.strictEqual(report.recommended_next_action.candidate_id, verifier.promoted_candidate_id);
+  assert.ok(verifier.rollback.current_run.includes('No connector state is changed'));
+  assert.ok(verifier.rollback.future_extension.includes('revert the summary extension'));
+});
+
 if (failed > 0) {
   console.log(`\nFailed: ${failed}`);
   process.exit(1);

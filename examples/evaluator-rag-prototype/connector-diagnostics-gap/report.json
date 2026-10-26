@@ -19,5 +19,27 @@
   "recommended_next_action": {
     "candidate_id": "bounded-event-summary",
     "action": "Check event retention and query support, then propose the smallest necessary summary extension."
+  },
+  "scoring": {
+    "status": "not_performed",
+    "scores": null,
+    "reason": "Illustrative expected decisions only; no model benchmark or connector checks were executed."
+  },
+  "evidence_coverage": {
+    "kind": "synthetic_fixture_only",
+    "sources": [
+      "scenario.json#/inputs/inspected_capabilities",
+      "scenario.json#/inputs/unavailable_channels",
+      "trace.json#/events",
+      "candidate-playbook.md#worked-comparison"
+    ],
+    "covered": [
+      "Connection and permission diagnostics plus per-request throttle events support the bounded-summary decision.",
+      "Unavailable settings are preserved as unknown rather than evidence of absent capability."
+    ],
+    "gaps": [
+      "Event retention and deployed settings are unknown.",
+      "The historical incident and ECC causal contribution are unverified; no connector was executed."
+    ]
   }
 }
