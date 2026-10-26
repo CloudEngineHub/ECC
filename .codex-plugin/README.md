@@ -92,7 +92,7 @@ node scripts/codex/check-plugin-cache.js --version '<installed-version>'
 ```
 
 If the affected session's hook warning identifies the exact ECC plugin root,
-prefer `node scripts/codex/check-plugin-cache.js --plugin-dir /absolute/path/to/active/ecc/cache`.
+prefer `node scripts/codex/check-plugin-cache.js --plugin-dir "/absolute/path/to/active/ecc/cache"`.
 Use the same `CODEX_HOME` for the version check (or pass `--codex-home`). The
 checker's default comes from the checkout's `package.json`; it does not discover
 the active version, and a passing check against an older cache is insufficient.
@@ -112,7 +112,7 @@ option to install the runtime packages without creating executable links:
 
 ```bash
 # Set this to the active ECC plugin root confirmed above.
-ECC_PLUGIN_CACHE=/absolute/path/to/active/ecc/cache
+ECC_PLUGIN_CACHE="/absolute/path/to/active/ecc/cache"
 (
   set -eu
   cd -- "$ECC_PLUGIN_CACHE"
