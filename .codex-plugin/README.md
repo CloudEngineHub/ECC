@@ -81,9 +81,23 @@ not create a second scope or duplicate hook registration.
 
 Native marketplace installation copies ECC's source; it does not run `npm ci`
 for its hook dependencies. If a hook reports a missing runtime package, first
-check the active ECC cache directory printed by
-`node scripts/codex/check-plugin-cache.js`. Do not install into a different
-cached version or use the deprecated sync script to repair the native plugin.
+run `codex plugin list --json` with the same `CODEX_HOME` as the affected
+session. Find the installed, enabled `ecc@ecc` entry and its version; do not
+select a version merely because its directory exists. From an ECC checkout,
+check that version explicitly:
+
+```bash
+# Replace <installed-version> with the version from Codex's installed entry.
+node scripts/codex/check-plugin-cache.js --version '<installed-version>'
+```
+
+If the affected session's hook warning identifies the exact ECC plugin root,
+prefer `node scripts/codex/check-plugin-cache.js --plugin-dir /absolute/path/to/active/ecc/cache`.
+Use the same `CODEX_HOME` for the version check (or pass `--codex-home`). The
+checker's default comes from the checkout's `package.json`; it does not discover
+the active version, and a passing check against an older cache is insufficient.
+Confirm the selected root matches the affected session before installing. Do
+not use the deprecated sync script to repair the native plugin.
 
 Codex 0.164.0 can reject a plugin after a normal dependency install with
 `unsupported plugin entry type ... node_modules/.bin/js-yaml`. npm normally
@@ -97,14 +111,21 @@ For an explicitly chosen cache-local dependency install, use npm's
 option to install the runtime packages without creating executable links:
 
 ```bash
-# Set this to the active ECC plugin root reported by the cache check.
+# Set this to the active ECC plugin root confirmed above.
 ECC_PLUGIN_CACHE=/absolute/path/to/active/ecc/cache
-cd "$ECC_PLUGIN_CACHE"
-npm ci --omit=dev --ignore-scripts --no-audit --no-fund --no-bin-links
-node -e "require('js-yaml'); require('@iarna/toml'); require('ajv'); require('sql.js'); require('zod')"
+(
+  set -eu
+  cd -- "$ECC_PLUGIN_CACHE"
+  test -f package.json
+  test -f package-lock.json
+  npm ci --omit=dev --ignore-scripts --no-audit --no-fund --no-bin-links
+  node -e "require('js-yaml'); require('@iarna/toml'); require('ajv'); require('sql.js'); require('zod')"
+)
 ```
 
-The cache root must contain ECC's `package.json` and `package-lock.json`.
+The cache root must contain ECC's `package.json` and `package-lock.json`. The
+subshell stops on a failed directory change, missing manifest, or failed install
+before running any later command, and leaves the caller's directory unchanged.
 `npm ci` replaces its dependency tree; this opt-in command is not part of the
 default Codex installer. The final command checks Node package resolution, not
 Codex hook execution. Executable shortcuts in `node_modules/.bin` are
