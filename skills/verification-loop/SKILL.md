@@ -98,8 +98,9 @@ Review each changed file for:
 
 When the requested outcome requires deployment or target-environment verification,
 report target acceptance separately from local checks. Record the environment and
-installed version, the evidence, and the next permitted check or precise access
-dependency. Passing tests, review, merge, or release does not verify that target.
+installed version when known, the evidence, and the next permitted check or precise
+access dependency. Passing local checks, review, merge, or release does not establish
+target acceptance. Report VERIFIED or FAILED for an executed target check, with its evidence.
 Do not access production or make external changes without authorization. For
 local-only tasks, mark target acceptance as not applicable.
 
