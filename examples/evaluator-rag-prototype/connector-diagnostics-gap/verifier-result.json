@@ -1,0 +1,29 @@
+{
+  "schema_version": "ecc.evaluator-rag.verifier.v1",
+  "scenario_id": "connector-diagnostics-gap",
+  "run_id": "illustrative-connector-gap",
+  "read_only": true,
+  "evaluation_status": "illustrative_expected_decisions_not_executed_connector_checks",
+  "candidates": [
+    {
+      "candidate_id": "bounded-event-summary",
+      "decision": "accepted",
+      "reasons": [
+        "Names all inspected diagnostic paths and their observed coverage",
+        "Uses existing throttle events for the remaining interval-summary requirement",
+        "Keeps retention and deployed settings unknown until checked",
+        "Requires evidence before introducing a new background component"
+      ]
+    },
+    {
+      "candidate_id": "new-monitor-without-inventory",
+      "decision": "rejected",
+      "reasons": [
+        "Duplicates existing connection and access diagnostics",
+        "Infers absent capability from an unavailable settings channel",
+        "Provides no evidence that existing events cannot satisfy the remaining gap"
+      ]
+    }
+  ],
+  "promoted_candidate_id": "bounded-event-summary"
+}

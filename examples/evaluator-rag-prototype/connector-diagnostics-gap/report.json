@@ -1,0 +1,23 @@
+{
+  "schema_version": "ecc.evaluator-rag.report.v1",
+  "scenario_id": "connector-diagnostics-gap",
+  "run_id": "illustrative-connector-gap",
+  "read_only": true,
+  "result": "illustrative_expected_result",
+  "findings": [
+    {
+      "id": "remaining-gap",
+      "severity": "info",
+      "summary": "Only interval aggregation is absent from the inspected path; retention and deployed settings remain unknown."
+    },
+    {
+      "id": "no-daemon-evidence",
+      "severity": "warning",
+      "summary": "A separate monitor needs evidence that a bounded query or thin extension cannot meet the requirement."
+    }
+  ],
+  "recommended_next_action": {
+    "candidate_id": "bounded-event-summary",
+    "action": "Check event retention and query support, then propose the smallest necessary summary extension."
+  }
+}

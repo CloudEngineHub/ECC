@@ -1,0 +1,58 @@
+{
+  "schema_version": "ecc.evaluator-rag.scenario.v1",
+  "scenario_id": "connector-diagnostics-gap",
+  "title": "Inspect an existing connector before designing another monitor",
+  "mode": "read_only_prototype",
+  "objective": "Identify the smallest demonstrated diagnostics gap before recommending a new subsystem.",
+  "sources": [
+    {
+      "kind": "repo_doc",
+      "path": "skills/search-first/SKILL.md",
+      "purpose": "Existing research, reuse and minimal-extension guidance"
+    },
+    {
+      "kind": "public_feedback",
+      "url": "https://github.com/affaan-m/ECC/issues/3680",
+      "purpose": "Reported workflow observation; not an ECC reproduction"
+    }
+  ],
+  "evidence_limits": "The reported connector configuration, original request, ECC activation/version and causal contribution are unverified. All connector capabilities below are synthetic evaluation inputs.",
+  "inputs": {
+    "request": "Explain connection failures, permission denials and repeated throttling using the connector already in use.",
+    "inspected_capabilities": [
+      {
+        "path": "connector/diagnostics/connection",
+        "observed": "Returns endpoint reachability and last connection error"
+      },
+      {
+        "path": "connector/diagnostics/access",
+        "observed": "Returns permission-denial details"
+      },
+      {
+        "path": "connector/diagnostics/requests",
+        "observed": "Returns per-request throttle events, without an aggregate count in the inspected path"
+      }
+    ],
+    "unavailable_channels": [
+      "Historical deployment settings could not be read"
+    ],
+    "remaining_requirement": "A count of throttle events over the requested interval"
+  },
+  "retrieval_questions": [
+    "Which actual connector paths were examined?",
+    "What requested behavior is missing from those paths?",
+    "Can the existing events satisfy the gap with a bounded query?",
+    "What evidence would justify a separate background component?"
+  ],
+  "forbidden_actions": [
+    "deploying a background monitor from this evaluator",
+    "treating unavailable research as proof of missing capability",
+    "claiming the reported incident is a reproduced ECC defect"
+  ],
+  "acceptance_gates": [
+    "name examined capability and evidence scope",
+    "state the observed limitation separately from unknown settings",
+    "choose the smallest extension supported by available events",
+    "justify any new background component with a demonstrated unmet requirement"
+  ]
+}

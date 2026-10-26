@@ -1,0 +1,33 @@
+{
+  "schema_version": "ecc.evaluator-rag.trace.v1",
+  "scenario_id": "connector-diagnostics-gap",
+  "run_id": "illustrative-connector-gap",
+  "read_only": true,
+  "illustrative": true,
+  "events": [
+    {
+      "phase": "observation",
+      "summary": "Synthetic request needs three diagnostics; the connector is already in use."
+    },
+    {
+      "phase": "retrieval",
+      "summary": "The supplied fixture covers connection and permission diagnostics and per-request throttle events; deployment settings remain unknown."
+    },
+    {
+      "phase": "proposal",
+      "candidate_ids": [
+        "bounded-event-summary",
+        "new-monitor-without-inventory"
+      ]
+    },
+    {
+      "phase": "verification",
+      "summary": "Expected rubric comparison only: accept a bounded aggregate over existing events; reject a separate daemon justified only by unavailable settings."
+    },
+    {
+      "phase": "promotion",
+      "promoted_candidate_id": "bounded-event-summary",
+      "summary": "Illustrative playbook selection; no connector, service or settings are changed."
+    }
+  ]
+}
