@@ -409,6 +409,70 @@ test('deep analyzer evidence scenario rejects no-corpus analyzer changes', () =>
   assert.ok(playbook.includes('Deep Analyzer Evidence'));
 });
 
+test('prepared verifier artifacts preserve shared identity and illustrative decisions', () => {
+  const root = 'prepared-verifier-effect-state/';
+  const scenario = readFixtureJson(`${root}scenario.json`);
+  const trace = readFixtureJson(`${root}trace.json`);
+  const report = readFixtureJson(`${root}report.json`);
+  const verifier = readFixtureJson(`${root}verifier-result.json`);
+  const playbook = read(`examples/evaluator-rag-prototype/${root}candidate-playbook.md`);
+
+  assert.strictEqual(scenario.scenario_id, 'prepared-verifier-effect-state');
+  assert.strictEqual(scenario.mode, 'read_only_prototype');
+  for (const artifact of [trace, report, verifier]) {
+    assert.strictEqual(artifact.scenario_id, scenario.scenario_id);
+    assert.strictEqual(artifact.run_id, 'illustrative-verifier-effect-state');
+    assert.strictEqual(artifact.read_only, true);
+  }
+  assert.strictEqual(trace.illustrative, true);
+  assert.strictEqual(report.result, 'illustrative_expected_result');
+  assert.strictEqual(verifier.evaluation_status, 'illustrative_expected_decisions_not_executed_external_checks');
+  const acceptedId = 'correct-read-preserve-effect';
+  const accepted = verifier.candidates.find(candidate => candidate.candidate_id === acceptedId);
+  const rejected = verifier.candidates.find(candidate => candidate.candidate_id === 'reapply-after-verifier-error');
+  assert.strictEqual(accepted.decision, 'accepted');
+  assert.strictEqual(rejected.decision, 'rejected');
+  assert.strictEqual(verifier.promoted_candidate_id, acceptedId);
+  assert.strictEqual(report.recommended_next_action.candidate_id, acceptedId);
+  assert.ok(trace.events.some(event => event.promoted_candidate_id === acceptedId));
+  assert.ok(playbook.includes(`Candidate id: \`${acceptedId}\``));
+  assert.ok(playbook.includes('This synthetic, read-only example records expected rubric decisions.'));
+  assert.ok(accepted.rollback.includes('must not undo OP_A'));
+  assert.ok(rejected.rollback.includes('Reject this candidate'));
+});
+
+test('prepared verifier distinguishes accepted, unknown and not-dispatched operations', () => {
+  const scenario = readFixtureJson('prepared-verifier-effect-state/scenario.json');
+  const playbook = read('examples/evaluator-rag-prototype/prepared-verifier-effect-state/candidate-playbook.md');
+  const { effect, verification, unknown_control, preflight_control } = scenario.inputs;
+
+  assert.deepStrictEqual(effect, {
+    operation_id: 'OP_A', status: 'accepted', receipt: 'synthetic-receipt-A', apply_count: 1
+  });
+  assert.strictEqual(verification.status, 'verifier_error');
+  assert.deepStrictEqual(verification.required_columns, ['pid', 'comm']);
+  assert.deepStrictEqual(verification.prepared_argv, ['docker', 'top', 'example-container', '-eo', 'comm']);
+  assert.deepStrictEqual(verification.corrected_read_argv, ['docker', 'top', 'example-container', '-eo', 'pid,comm']);
+  assert.deepStrictEqual(unknown_control, { operation_id: 'OP_B', status: 'unknown', receipt: null });
+  assert.strictEqual(preflight_control.operation_id, 'OP_C');
+  assert.strictEqual(preflight_control.status, 'not_dispatched');
+  for (const blocked of [
+    'replaying an accepted effect because its verifier failed',
+    'automatically rolling back solely because of verifier error',
+    'treating unknown as failed and automatically resending'
+  ]) {
+    assert.ok(scenario.forbidden_actions.includes(blocked), `Missing effect-state rule: ${blocked}`);
+  }
+  for (const rule of [
+    '| OP_A | Accepted, receipt A, one apply | Verifier error: missing PID column | Correct only the read; retain accepted identity and receipt |',
+    '| OP_B | Unknown, no retained response | Outcome not established | Targeted reconciliation; no automatic resend |',
+    '| OP_C | Not dispatched | Syntax preflight failed | Fix and recheck the prepared command before dependent action |',
+    'Do not repeat load/recreate or initiate rollback merely to make a verifier green.'
+  ]) {
+    assert.ok(playbook.includes(rule), `Missing playbook effect-state rule: ${rule}`);
+  }
+});
+
 if (failed > 0) {
   console.log(`\nFailed: ${failed}`);
   process.exit(1);
