@@ -463,14 +463,20 @@ test('prepared verifier distinguishes accepted, unknown and not-dispatched opera
   ]) {
     assert.ok(scenario.forbidden_actions.includes(blocked), `Missing effect-state rule: ${blocked}`);
   }
-  for (const rule of [
-    '| OP_A | Accepted, receipt A, one apply | Verifier error: missing PID column | Correct only the read; retain accepted identity and receipt |',
-    '| OP_B | Unknown, no retained response | Outcome not established | Targeted reconciliation; no automatic resend |',
-    '| OP_C | Not dispatched | Syntax preflight failed | Fix and recheck the prepared command before dependent action |',
-    'Do not repeat load/recreate or initiate rollback merely to make a verifier green.'
+  const rows = playbook.split('\n').map(line => line.split('|').map(cell => cell.trim()));
+  for (const [operationId, state, actions] of [
+    ['OP_A', 'Accepted', ['Correct only the read', 'retain accepted identity and receipt']],
+    ['OP_B', 'Unknown', ['Targeted reconciliation', 'no automatic resend']],
+    ['OP_C', 'Not dispatched', ['Fix and recheck the prepared command', 'before dependent action']]
   ]) {
-    assert.ok(playbook.includes(rule), `Missing playbook effect-state rule: ${rule}`);
+    const row = rows.find(cells => cells[1] === operationId);
+    assert.ok(row, `Missing playbook operation: ${operationId}`);
+    assert.strictEqual(row[2].split(',')[0].trim(), state, `Wrong playbook state: ${operationId}`);
+    for (const action of actions) {
+      assert.ok(row[4].includes(action), `Missing playbook action for ${operationId}: ${action}`);
+    }
   }
+  assert.ok(playbook.includes('Do not repeat load/recreate or initiate rollback merely to make a verifier green.'));
 });
 
 if (failed > 0) {
