@@ -343,7 +343,10 @@ const FAIL_CLOSED = true;
 // Identifies a verified authorization, however its JSON is encoded, and keeps
 // the claim until the authorization can no longer settle: the signer picks
 // that expiry, and verification does not cap it at maxTimeoutSeconds.
-function claimOf(paymentPayload, requirements): { key: string; until: number } | undefined {
+function claimOf(
+  paymentPayload: { payload: Record<string, any> },
+  requirements: { network: string; asset: string },
+): { key: string; until: number } | undefined {
   const now = Math.floor(Date.now() / 1000);
   const keep = (expiry: number) => Math.min(Math.max(now + CLAIM_MIN_S, expiry + 60), now + CLAIM_MAX_S);
   const p = paymentPayload.payload;
@@ -390,12 +393,12 @@ const resourceServer = new x402ResourceServer(
     if (!result.isValid) return; // an invalid payment never takes a claim
     const claim = claimOf(paymentPayload, requirements);
     if (!claim) return;
+    // NX is atomic: of two simultaneous copies exactly one wins.
+    const set = redis.set(claim.key, "1", {
+      condition: "NX",
+      expiration: { type: "EXAT", value: claim.until },
+    });
     try {
-      // NX is atomic: of two simultaneous copies exactly one wins.
-      const set = redis.set(claim.key, "1", {
-        condition: "NX",
-        expiration: { type: "EXAT", value: claim.until },
-      });
       if ((await withTimeout(set, CLAIM_TIMEOUT_MS)) === "OK") return;
       return {
         abort: true,
@@ -406,6 +409,10 @@ const resourceServer = new x402ResourceServer(
       // Return, don't throw: the resource server logs and skips a hook that
       // throws, which would run the handler unguarded.
       if (FAIL_CLOSED) {
+        // A write that timed out can still land. This request is refused and
+        // the handler never runs, so release a late claim, or the retry
+        // would be refused as a replay of work that never happened.
+        set.then((reply) => (reply === "OK" ? redis.del(claim.key) : 0)).catch(() => {});
         return { abort: true, reason: "claim_unavailable", message: "Retry shortly." };
       }
     }
@@ -417,7 +424,7 @@ app.use(
   paymentMiddleware(
     {
       "POST /report": {
-        accepts: [{ scheme: "exact", price: "$0.01", network: "eip155:8453", payTo: process.env.PAY_TO }],
+        accepts: [{ scheme: "exact", price: "$0.01", network: "eip155:8453", payTo: process.env.PAY_TO! }],
       },
     },
     resourceServer,

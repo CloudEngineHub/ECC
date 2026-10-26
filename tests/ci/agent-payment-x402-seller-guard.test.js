@@ -89,10 +89,12 @@ function load(doc, { mode = 'ok', failClosed = true } = {}) {
       this.sets.push({ key, opts });
       if (mode === 'offline') throw new Error('The client is offline');
       if (mode === 'hang') return new Promise(() => {});
+      if (mode === 'late' && this.sets.length === 1) await new Promise(r => setTimeout(r, 400)); // the first write lands after the claim timeout
       if (store.has(key)) return null;
       store.add(key);
       return 'OK';
     },
+    async del(key) { store.delete(key); return 1; },
   };
   const modules = {
     'node:crypto': crypto,
@@ -137,7 +139,8 @@ async function serve(h) {
     const header = res.headers.get('payment-required');
     return header ? JSON.parse(Buffer.from(header, 'base64').toString()).error : undefined;
   };
-  return { post, sign, reason, close: () => new Promise(resolve => server.close(resolve)) };
+  // Node 18's close() waits for idle keep-alive sockets left by fetch.
+  return { post, sign, reason, close: () => new Promise(resolve => { server.close(resolve); server.closeIdleConnections?.(); }) };
 }
 
 const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64');
@@ -196,6 +199,20 @@ for (const doc of DOCS) {
         assert.ok(Date.now() - started < 2000, `${mode}: the claim timeout bounds the wait`);
       } finally { await s.close(); }
     }
+  });
+  add('a claim that lands after the timeout is released, so the retry is served', async () => {
+    const h = load(doc, { mode: 'late' });
+    const s = await serve(h);
+    try {
+      const header = await s.sign();
+      const first = await s.post(header);
+      assert.equal(s.reason(first), 'claim_unavailable');
+      await new Promise(r => setTimeout(r, 600)); // the late write lands, then is released
+      const retry = await s.post(header);
+      assert.equal(retry.status, 200, `retry: ${s.reason(retry)}`);
+      assert.equal(h.runs.length, 1);
+      assert.equal(h.facilitator.settles, 1);
+    } finally { await s.close(); }
   });
   add('failing open is an explicit choice that gives up duplicate protection', async () => {
     const h = load(doc, { mode: 'offline', failClosed: false });
