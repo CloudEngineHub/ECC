@@ -123,6 +123,10 @@ Current corpus:
   expected-output comparisons, representative repository/commit histories, and
   regression commands before deep-analysis behavior can be promoted.
 
+- `prepared-verifier-effect-state`: checks prepared command contracts while
+  preserving accepted, unknown and not-dispatched operation states. Separate
+  source-reported mechanisms remain separate; decisions are illustrative.
+
 ## ECC Tools Mapping
 
 ECC Tools already flags missing RAG/evaluator evidence for retrieval,

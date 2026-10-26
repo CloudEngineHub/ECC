@@ -1,0 +1,23 @@
+{
+  "schema_version": "ecc.evaluator-rag.report.v1",
+  "scenario_id": "prepared-verifier-effect-state",
+  "run_id": "illustrative-verifier-effect-state",
+  "read_only": true,
+  "result": "illustrative_expected_result",
+  "findings": [
+    {
+      "id": "two-state-axes",
+      "severity": "warning",
+      "summary": "An accepted effect and verifier_error can coexist; verifier failure does not authorize replay or rollback."
+    },
+    {
+      "id": "independent-mechanisms",
+      "severity": "info",
+      "summary": "Output columns, YAML shape, method-specific payload fields, command boundaries and identifier representation require distinct evidence."
+    }
+  ],
+  "recommended_next_action": {
+    "candidate_id": "correct-read-preserve-effect",
+    "action": "Repair the read/check contract while retaining accepted outcome; reconcile unknown effects before any retry."
+  }
+}
