@@ -1,46 +1,92 @@
 'use strict';
 
-// Execute the canonical and translated seller replay guard offline. Redis and
-// @solana/kit are replaced with in-memory stubs; node:crypto is real. No
-// network, key, or real payment is used.
+// Run the canonical and translated seller replay guard against the real x402
+// Express middleware and resource server, so verification, the onAfterVerify
+// hook, the handler and settlement happen in their real order. Payments are
+// signed by the real @x402/evm client with a throwaway key; the facilitator is
+// a local stand-in that checks the EIP-3009 signature with viem and settles
+// each nonce once. Redis and @solana/kit are stubbed. No network or funds.
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { createRequire } = require('node:module');
 const vm = require('node:vm');
 const ts = require('typescript');
+const express = require('express');
+const x402Express = require('@x402/express');
+const coreServer = require('@x402/core/server');
+const { x402Client, x402HTTPClient } = require('@x402/core/client');
+const { ExactEvmScheme: ExactEvmServer } = require('@x402/evm/exact/server');
+const { ExactEvmScheme: ExactEvmClient } = require('@x402/evm/exact/client');
+const { toClientEvmSigner } = require('@x402/evm');
+const viemFromEvm = createRequire(require.resolve('@x402/evm'));
+const { verifyTypedData } = viemFromEvm('viem');
+const { privateKeyToAccount, generatePrivateKey } = viemFromEvm('viem/accounts');
+
 const ROOT = path.resolve(__dirname, '../..');
 const DOCS = [
   'skills/agent-payment-x402/SKILL.md',
   'docs/ja-JP/skills/agent-payment-x402/SKILL.md',
   'docs/zh-CN/skills/agent-payment-x402/SKILL.md',
 ];
-const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const NOW_S = 1_800_000_000; // fixed clock for the guard's expiry arithmetic
+const PAY_TO = '0x000000000000000000000000000000000000dEaD';
 
 // Wire format: compact-u16 signature count (one byte below 128), 64 bytes per
 // signature, then the message. Enough of a decoder for the stubbed kit.
 const kit = {
   getBase64Encoder: () => ({ encode: text => new Uint8Array(Buffer.from(text, 'base64')) }),
-  getTransactionDecoder: () => ({
-    decode: bytes => ({ messageBytes: bytes.slice(1 + 64 * bytes[0]) }),
-  }),
+  getTransactionDecoder: () => ({ decode: bytes => ({ messageBytes: bytes.slice(1 + 64 * bytes[0]) }) }),
 };
 
-function harness(doc, mode = 'ok') {
+// Stand-in facilitator: real signature check, each nonce settles once.
+class Facilitator {
+  constructor() { this.settles = 0; this.consumed = new Set(); }
+  async getSupported() {
+    return { kinds: [{ x402Version: 2, scheme: 'exact', network: 'eip155:8453' }], extensions: [], signers: {} };
+  }
+  async verify(payload, req) {
+    const a = payload.payload.authorization;
+    const valid = await verifyTypedData({
+      address: a.from,
+      domain: { name: req.extra.name, version: req.extra.version, chainId: 8453, verifyingContract: req.asset },
+      types: { TransferWithAuthorization: [
+        { name: 'from', type: 'address' }, { name: 'to', type: 'address' }, { name: 'value', type: 'uint256' },
+        { name: 'validAfter', type: 'uint256' }, { name: 'validBefore', type: 'uint256' }, { name: 'nonce', type: 'bytes32' },
+      ] },
+      primaryType: 'TransferWithAuthorization',
+      message: { ...a, value: BigInt(a.value), validAfter: BigInt(a.validAfter), validBefore: BigInt(a.validBefore) },
+      signature: payload.payload.signature,
+    }).catch(() => false);
+    if (!valid) return { isValid: false, invalidReason: 'invalid_exact_evm_payload_signature', payer: a.from };
+    if (this.consumed.has(a.nonce)) return { isValid: false, invalidReason: 'invalid_exact_evm_payload_authorization_nonce_used', payer: a.from };
+    return { isValid: true, payer: a.from };
+  }
+  async settle(payload) {
+    this.settles++;
+    const { nonce, from } = payload.payload.authorization;
+    if (this.consumed.has(nonce)) return { success: false, errorReason: 'nonce_used', transaction: '', network: 'eip155:8453', payer: from };
+    this.consumed.add(nonce);
+    return { success: true, transaction: `0x${'ab'.repeat(32)}`, network: 'eip155:8453', payer: from };
+  }
+}
+
+function load(doc, { mode = 'ok', failClosed = true } = {}) {
   const text = fs.readFileSync(path.join(ROOT, doc), 'utf8');
   const blocks = [...text.matchAll(/```typescript\n([\s\S]*?)\n```/g)];
-  const block = blocks.find(match => match[1].includes('async function replayGuard('));
+  const block = blocks.find(match => match[1].includes('.onAfterVerify('));
   assert.ok(block, 'document must retain a runnable seller replay guard');
+  let source = block[1];
+  if (!failClosed) source = source.replace('const FAIL_CLOSED = true;', 'const FAIL_CLOSED = false;');
+  const facilitator = new Facilitator();
   const store = new Set();
   const redis = {
-    options: null, listeners: {}, sets: 0, badOptions: 0, lastUntil: 0,
+    options: null, listeners: {}, sets: [],
     on(event, fn) { this.listeners[event] = fn; return this; },
     connect: () => Promise.reject(new Error('ECONNREFUSED')),
     async set(key, value, opts) {
-      this.sets++;
-      // Recorded, not asserted: the guard's own fail-open catch would hide a throw.
-      if (opts.condition !== 'NX' || opts.expiration?.type !== 'EXAT') this.badOptions++;
-      this.lastUntil = opts.expiration?.value;
+      this.sets.push({ key, opts });
       if (mode === 'offline') throw new Error('The client is offline');
       if (mode === 'hang') return new Promise(() => {});
       if (store.has(key)) return null;
@@ -50,108 +96,138 @@ function harness(doc, mode = 'ok') {
   };
   const modules = {
     'node:crypto': crypto,
+    express,
+    '@x402/express': x402Express,
+    '@x402/core/server': { ...coreServer, HTTPFacilitatorClient: function HTTPFacilitatorClient() { return facilitator; } },
+    '@x402/evm/exact/server': { ExactEvmScheme: ExactEvmServer },
     '@solana/kit': kit,
     redis: { createClient: options => { redis.options = options; return redis; } },
   };
-  const source = `${block[1]}\nmodule.exports = { claimKey, replayGuard };`;
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS },
+  const compiled = ts.transpileModule(`${source}\nmodule.exports = { app, claimOf };`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
     reportDiagnostics: true,
   });
   assert.equal((compiled.diagnostics || []).length, 0);
+  const runs = [];
+  class FixedDate extends Date { static now() { return NOW_S * 1000; } }
   const context = vm.createContext({
     require: name => modules[name], module: { exports: {} }, exports: {},
-    Buffer, Promise, setTimeout, console: { warn() {} }, process: { env: {} },
+    Buffer, Promise, setTimeout, Date: FixedDate, console: { warn() {} },
+    process: { env: { REDIS_URL: 'redis://stub', FACILITATOR_URL: 'http://stub', PAY_TO } },
+    // A handler that takes time, like the expensive ones the guard is for, so
+    // concurrent copies are all verified while the first one is still running.
+    buildReport: async () => { runs.push(1); await new Promise(r => setTimeout(r, 150)); return { report: 'ok' }; },
   });
   new vm.Script(compiled.outputText, { filename: doc }).runInContext(context);
-  const call = async header => {
-    const out = { status: 0, body: null, ran: false };
-    const res = {
-      status(code) { out.status = code; return this; },
-      json(body) { out.body = body; return this; },
-    };
-    const req = { get: name => (name === 'payment-signature' ? header : undefined) };
-    await context.module.exports.replayGuard(req, res, () => { out.ran = true; });
-    return out;
-  };
-  return { ...context.module.exports, call, redis };
+  return { ...context.module.exports, facilitator, redis, runs };
 }
 
-const b64 = value => Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64');
-function evm(nonce, { asset = USDC_BASE, indent, validBefore } = {}) {
-  return b64(JSON.stringify({
-    x402Version: 2,
-    accepted: { scheme: 'exact', network: 'eip155:8453', asset },
-    payload: { signature: '0x00', authorization: { from: '0xAbC0000000000000000000000000000000000001', nonce, validBefore } },
-  }, null, indent));
+async function serve(h) {
+  const server = await new Promise(resolve => { const s = h.app.listen(0, () => resolve(s)); });
+  const url = `http://127.0.0.1:${server.address().port}/report`;
+  const client = new x402HTTPClient(new x402Client().register('eip155:8453',
+    new ExactEvmClient(toClientEvmSigner(privateKeyToAccount(generatePrivateKey())))));
+  const post = headers => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}' });
+  const sign = async () => {
+    const challenge = await post({});
+    const required = client.getPaymentRequiredResponse(name => challenge.headers.get(name), await challenge.json().catch(() => undefined));
+    return client.encodePaymentSignatureHeader(await client.createPaymentPayload(required));
+  };
+  const reason = res => {
+    const header = res.headers.get('payment-required');
+    return header ? JSON.parse(Buffer.from(header, 'base64').toString()).error : undefined;
+  };
+  return { post, sign, reason, close: () => new Promise(resolve => server.close(resolve)) };
 }
-function svm(feeSlotByte, message = 'payer-signed-message') {
-  const tx = Buffer.concat([Buffer.from([2]), Buffer.alloc(64, feeSlotByte), Buffer.alloc(64, 7), Buffer.from(message)]);
-  return b64({ x402Version: 2, accepted: { network: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp' },
-    payload: { transaction: tx.toString('base64') } });
-}
+
+const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64');
+const evmPayload = (nonce, validBefore, from = '0xAbC0000000000000000000000000000000000001') =>
+  ({ payload: { signature: '0x00', authorization: { from, nonce, validBefore: String(validBefore) } } });
+const svmPayload = feeSlot => ({ payload: { transaction: Buffer.concat([
+  Buffer.from([2]), Buffer.alloc(64, feeSlot), Buffer.alloc(64, 7), Buffer.from('payer-signed-message')]).toString('base64') } });
+const REQ = { network: 'eip155:8453', asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' };
 
 const tests = [];
 for (const doc of DOCS) {
   const add = (name, test) => tests.push([`${doc}: ${name}`, test]);
-  add('runs the route once for three concurrent copies of one authorization', async () => {
-    const h = harness(doc);
-    const results = await Promise.all([h.call(evm('0x01')), h.call(evm('0x01')), h.call(evm('0x01'))]);
-    assert.equal(results.filter(r => r.ran).length, 1);
-    const refused = results.filter(r => r.status === 402);
-    assert.equal(refused.length, 2);
-    for (const r of refused) assert.equal(r.body.error, 'payment_replayed');
-    assert.equal(h.redis.badOptions, 0, 'claims must use SET NX with an absolute expiry');
+  add('three concurrent copies of one signed payment run the handler once', async () => {
+    const h = load(doc);
+    const s = await serve(h);
+    try {
+      const header = await s.sign();
+      const results = await Promise.all([1, 2, 3].map(() => s.post(header)));
+      assert.equal(h.runs.length, 1);
+      assert.equal(h.facilitator.settles, 1);
+      const refused = results.filter(r => r.status === 402);
+      assert.equal(refused.length, 2);
+      for (const r of refused) assert.equal(s.reason(r), 'payment_replayed');
+      for (const { opts } of h.redis.sets) {
+        assert.equal(opts.condition, 'NX');
+        assert.equal(opts.expiration.type, 'EXAT');
+        assert.equal(opts.expiration.value, NOW_S + 900);
+      }
+    } finally { await s.close(); }
   });
-  add('keys EVM payments on asset, payer and nonce, not header bytes', async () => {
-    const h = harness(doc);
-    assert.equal(h.claimKey(evm('0x01')), h.claimKey(evm('0x01', { indent: 2 })));
-    assert.notEqual(h.claimKey(evm('0x01')), h.claimKey(evm('0x02')));
-    assert.notEqual(h.claimKey(evm('0x01')), h.claimKey(evm('0x01', { asset: '0x0000000000000000000000000000000000000001' })));
+  add('an invalid signature takes no claim; the valid payment is then served', async () => {
+    const h = load(doc);
+    const s = await serve(h);
+    try {
+      const header = await s.sign();
+      const payload = JSON.parse(Buffer.from(header['PAYMENT-SIGNATURE'], 'base64').toString());
+      const forged = { ...payload, payload: { ...payload.payload, signature: `${payload.payload.signature.slice(0, -4)}0000` } };
+      const bad = await s.post({ 'PAYMENT-SIGNATURE': b64(forged) });
+      assert.equal(bad.status, 402);
+      assert.equal(h.redis.sets.length, 0, 'an unverified payment must not be claimed');
+      assert.equal((await s.post(header)).status, 200);
+      assert.equal(h.runs.length, 1);
+    } finally { await s.close(); }
   });
-  add('keys Solana payments on the signed message, ignoring the fee-payer slot', async () => {
-    const h = harness(doc);
-    assert.equal(h.claimKey(svm(0)), h.claimKey(svm(9)));
-    assert.notEqual(h.claimKey(svm(0)), h.claimKey(svm(0, 'another-message')));
-    assert.match(h.claimKey('not base64 json'), /^x402:raw:/);
+  add('fails closed when the store is offline or hangs: no handler run, no settlement', async () => {
+    for (const mode of ['offline', 'hang']) {
+      const h = load(doc, { mode });
+      const s = await serve(h);
+      try {
+        const started = Date.now();
+        const res = await s.post(await s.sign());
+        assert.equal(res.status, 402, mode);
+        assert.equal(s.reason(res), 'claim_unavailable', mode);
+        assert.equal(h.runs.length, 0, mode);
+        assert.equal(h.facilitator.settles, 0, mode);
+        assert.ok(Date.now() - started < 2000, `${mode}: the claim timeout bounds the wait`);
+      } finally { await s.close(); }
+    }
   });
-  add('loads without waiting on the store and never crashes on client errors', async () => {
-    const h = harness(doc);
+  add('failing open is an explicit choice that gives up duplicate protection', async () => {
+    const h = load(doc, { mode: 'offline', failClosed: false });
+    const s = await serve(h);
+    try {
+      const header = await s.sign();
+      await Promise.all([1, 2].map(() => s.post(header)));
+      assert.equal(h.runs.length, 2);
+    } finally { await s.close(); }
+  });
+  add('client starts without waiting on the store and cannot be crashed by its errors', async () => {
+    const h = load(doc);
     assert.equal(h.redis.options.disableOfflineQueue, true);
-    assert.ok(h.redis.options.commandsQueueMaxLength > 0, 'pending claims must be bounded');
+    assert.ok(h.redis.options.commandsQueueMaxLength > 0);
     assert.equal(typeof h.redis.listeners.error, 'function');
     h.redis.listeners.error(new Error('socket closed'));
   });
-  add('keeps a claim until the signed authorization expires', async () => {
-    const h = harness(doc);
-    const now = () => Math.floor(Date.now() / 1000);
-    await h.call(evm('0x31', { validBefore: String(now() + 3600) }));
-    assert.ok(Math.abs(h.redis.lastUntil - (now() + 3660)) <= 2, `1 h authorization: ${h.redis.lastUntil - now()} s`);
-    await h.call(evm('0x32', { validBefore: String(now() + 60) }));
-    assert.ok(Math.abs(h.redis.lastUntil - (now() + 900)) <= 2, `short authorization keeps the floor: ${h.redis.lastUntil - now()} s`);
-    await h.call(evm('0x33', { validBefore: (2n ** 256n).toString() }));
-    assert.ok(Math.abs(h.redis.lastUntil - (now() + 366 * 86400)) <= 2, 'absurd validBefore is capped');
-    await h.call(svm(3));
-    assert.ok(Math.abs(h.redis.lastUntil - (now() + 900)) <= 2, 'Solana uses the floor');
-  });
-  add('fails open when the store is offline', async () => {
-    const h = harness(doc, 'offline');
-    const [a, b] = [await h.call(evm('0x01')), await h.call(evm('0x01'))];
-    assert.ok(a.ran && b.ran);
-  });
-  add('fails open when the store hangs, within the claim timeout', async () => {
-    const h = harness(doc, 'hang');
-    const started = Date.now();
-    assert.ok((await h.call(evm('0x01'))).ran);
-    assert.ok(Date.now() - started < 1000);
-  });
-  add('stores nothing for oversized or missing headers', async () => {
-    const h = harness(doc);
-    const big = await h.call('A'.repeat(20_000));
-    assert.equal(big.status, 431);
-    assert.equal(big.ran, false);
-    assert.ok((await h.call(undefined)).ran);
-    assert.equal(h.redis.sets, 0);
+  add('claim keys identify the authorization and last until it expires', async () => {
+    const { claimOf } = load(doc);
+    const a = claimOf(evmPayload('0xAA', NOW_S + 3600), REQ);
+    assert.equal(a.key, claimOf(evmPayload('0xaa', NOW_S + 3600, '0xabc0000000000000000000000000000000000001'), REQ).key);
+    assert.notEqual(a.key, claimOf(evmPayload('0xAB', NOW_S + 3600), REQ).key);
+    assert.notEqual(a.key, claimOf(evmPayload('0xAA', NOW_S + 3600), { ...REQ, asset: '0x0000000000000000000000000000000000000001' }).key);
+    assert.equal(a.until, NOW_S + 3660);
+    assert.equal(claimOf(evmPayload('0xAC', NOW_S + 60), REQ).until, NOW_S + 900);
+    assert.equal(claimOf(evmPayload('0xAD', (2n ** 256n).toString()), REQ).until, NOW_S + 366 * 86400);
+    const permit2 = nonce => ({ payload: { permit2Authorization: { from: '0xAbC0000000000000000000000000000000000001', nonce, deadline: String(NOW_S + 3600) } } });
+    assert.equal(claimOf(permit2('1'), REQ).key, claimOf(permit2('0x1'), REQ).key);
+    assert.equal(claimOf(permit2('1'), REQ).key, claimOf(permit2('01'), REQ).key);
+    assert.equal(claimOf(permit2('1'), REQ).until, NOW_S + 3660);
+    assert.equal(claimOf(svmPayload(0), REQ).key, claimOf(svmPayload(9), REQ).key);
+    assert.equal(claimOf(svmPayload(0), REQ).until, NOW_S + 900);
   });
 }
 

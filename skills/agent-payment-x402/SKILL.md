@@ -308,19 +308,22 @@ This bites hardest when payouts go to freshly provisioned or custodial wallets, 
 
 **Sellers: run the route once per payment authorization.** The middleware verifies the payment, runs your handler, then settles. Verification does not consume the authorization (settlement does), so one signed payment sent several times at once passes verify every time and runs your handler every time. The facilitator settles only one copy, and the others get a 402 without the response, so nobody receives free output. But every side effect in the handler (an LLM call, a queued job, an on-chain transaction) happens once per copy. On a production seller (Python `x402` 2.9.0, FastAPI), one authorization sent three times concurrently produced three handler runs and one settlement. A paid-call counter inside the handler overstates revenue the same way; count after settlement instead. The wider verify-to-settle race is discussed in [x402#1169](https://github.com/x402-foundation/x402/issues/1169).
 
-Claim each authorization once, with an atomic insert, before the payment middleware runs:
+Claim each authorization once, after the facilitator has verified it and before the handler runs. The resource server's `onAfterVerify` hook runs at exactly that point, and an `abort` from it becomes a 402 without running the handler:
 
 ```typescript
 import { createHash } from "node:crypto";
+import express from "express";
+import { paymentMiddleware, x402ResourceServer } from "@x402/express";
+import { HTTPFacilitatorClient } from "@x402/core/server";
+import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { getBase64Encoder, getTransactionDecoder } from "@solana/kit";
 import { createClient } from "redis";
 
-// The guard must never be what takes the seller down. With the offline queue
-// disabled, a command sent while disconnected fails at once instead of waiting;
-// the queue cap does the same when the store is connected but not replying, so
-// abandoned claims cannot pile up; the error listener stops a client error from
-// crashing the process; and the connection is made in the background, so route
-// registration never waits on it.
+// The claim store must never be what takes the seller down. With the offline
+// queue disabled, a command sent while disconnected fails at once; the queue
+// cap does the same when the store is connected but not replying; the error
+// listener stops a client error from crashing the process; and the connection
+// is made in the background, so startup never waits on it.
 const redis = createClient({
   url: process.env.REDIS_URL,
   disableOfflineQueue: true,
@@ -331,51 +334,46 @@ redis.on("error", (err) => console.warn(`replay store: ${err.message}`));
 redis.connect().catch(() => {});
 
 const CLAIM_MIN_S = 900;          // longer than maxTimeoutSeconds plus your slowest handler run
-const CLAIM_MAX_S = 366 * 86_400; // ceiling for a signer-chosen validBefore
-const CLAIM_TIMEOUT_MS = 250;     // a slow store must not stall paid requests (the command itself is not cancelled)
-const MAX_HEADER_BYTES = 16_384;  // claims are stored before anything is verified
+const CLAIM_MAX_S = 366 * 86_400; // ceiling for a signer-chosen expiry
+const CLAIM_TIMEOUT_MS = 250;     // a slow store must not stall paid requests
+// When the store is unavailable: refuse before the handler runs (true), or run
+// it without duplicate protection (false). Fail open only if the handler is
+// idempotent or has its own side-effect boundary.
+const FAIL_CLOSED = true;
 
-// One key per authorization, not per header: re-encoding the same signed
-// payment must not make it look new.
-function claimKey(header: string): string {
-  try {
-    const p = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
-    const network = p.accepted?.network ?? "";
-    const auth = p.payload?.authorization;
-    if (auth?.from && auth?.nonce) {
-      // EVM exact (EIP-3009): each token contract accepts a (from, nonce) once,
-      // so the asset is part of the authorization's identity.
-      const asset = String(p.accepted?.asset ?? "").toLowerCase();
-      return `x402:${network}:${asset}:${String(auth.from).toLowerCase()}:${String(auth.nonce).toLowerCase()}`;
-    }
-    if (typeof p.payload?.transaction === "string") {
-      // SVM exact: hash the message the payer signed, not the whole transaction.
-      // The fee payer's signature slot sits outside the payer's signature, so a
-      // copy with different bytes there is still the same payment. The message
-      // already names the mint.
-      const tx = getTransactionDecoder().decode(getBase64Encoder().encode(p.payload.transaction));
-      return `x402:${network}:${createHash("sha256").update(new Uint8Array(tx.messageBytes)).digest("hex")}`;
-    }
-  } catch {
-    // Unparseable: fall through to the raw header, which still catches exact copies.
-  }
-  return `x402:raw:${createHash("sha256").update(header).digest("hex")}`;
-}
-
-// Keep a claim until the authorization itself expires. The signer picks the
-// EIP-3009 validBefore and verification does not cap it at maxTimeoutSeconds,
-// so a claim dropped earlier would let a copy of a still-valid authorization
-// whose settlement failed run the handler again.
-function claimUntil(header: string): number {
+// Identifies a verified authorization, however its JSON is encoded, and keeps
+// the claim until the authorization can no longer settle: the signer picks
+// that expiry, and verification does not cap it at maxTimeoutSeconds.
+function claimOf(paymentPayload, requirements): { key: string; until: number } | undefined {
   const now = Math.floor(Date.now() / 1000);
-  let validBefore = 0;
-  try {
-    const p = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
-    validBefore = Number(p.payload?.authorization?.validBefore) || 0;
-  } catch {
-    // No EVM expiry to honour: the floor applies.
+  const keep = (expiry: number) => Math.min(Math.max(now + CLAIM_MIN_S, expiry + 60), now + CLAIM_MAX_S);
+  const p = paymentPayload.payload;
+  if (p.authorization?.nonce) {
+    // EVM exact, EIP-3009: each token contract accepts a (from, nonce) once.
+    const { from, nonce, validBefore } = p.authorization;
+    const asset = requirements.asset.toLowerCase();
+    return {
+      key: `x402:${requirements.network}:${asset}:${from.toLowerCase()}:${nonce.toLowerCase()}`,
+      until: keep(Number(validBefore) || 0),
+    };
   }
-  return Math.min(Math.max(now + CLAIM_MIN_S, validBefore + 60), now + CLAIM_MAX_S);
+  if (p.permit2Authorization?.nonce !== undefined) {
+    // EVM exact, Permit2: uint256 nonces per owner, across tokens. The signed
+    // value is BigInt(nonce), so "1", "01" and "0x1" are one authorization.
+    const { from, nonce, deadline } = p.permit2Authorization;
+    return {
+      key: `x402:${requirements.network}:permit2:${from.toLowerCase()}:${BigInt(nonce)}`,
+      until: keep(Number(deadline) || 0),
+    };
+  }
+  if (typeof p.transaction === "string") {
+    // SVM exact: hash the message the payer signed, not the whole transaction.
+    // The fee payer's signature slot is outside the payer's signature.
+    const tx = getTransactionDecoder().decode(getBase64Encoder().encode(p.transaction));
+    const digest = createHash("sha256").update(new Uint8Array(tx.messageBytes)).digest("hex");
+    return { key: `x402:${requirements.network}:${digest}`, until: now + CLAIM_MIN_S };
+  }
+  return undefined;
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -385,36 +383,51 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   ]);
 }
 
-// Register on paid routes, before the x402 payment middleware.
-async function replayGuard(req, res, next) {
-  const header = req.get("payment-signature") ?? req.get("x-payment");
-  if (!header) return next();
-  if (header.length > MAX_HEADER_BYTES) {
-    return res.status(431).json({ error: "payment_header_too_large" });
-  }
-  let first = true;
-  try {
-    // NX is atomic: of two simultaneous copies exactly one wins.
-    const claimed = redis.set(claimKey(header), "1", {
-      condition: "NX",
-      expiration: { type: "EXAT", value: claimUntil(header) },
-    });
-    first = (await withTimeout(claimed, CLAIM_TIMEOUT_MS)) === "OK";
-  } catch {
-    // Fail open: the facilitator still refuses a second settlement, so a store
-    // outage degrades to the unguarded behaviour instead of blocking buyers.
-  }
-  if (!first) {
-    return res.status(402).json({
-      error: "payment_replayed",
-      detail: "This payment authorization was already presented. Sign a fresh one for each request.",
-    });
-  }
-  next();
-}
+const resourceServer = new x402ResourceServer(
+  new HTTPFacilitatorClient({ url: process.env.FACILITATOR_URL }),
+)
+  .register("eip155:8453", new ExactEvmScheme())
+  .onAfterVerify(async ({ paymentPayload, requirements, result }) => {
+    if (!result.isValid) return; // an invalid payment never takes a claim
+    const claim = claimOf(paymentPayload, requirements);
+    if (!claim) return;
+    try {
+      // NX is atomic: of two simultaneous copies exactly one wins.
+      const set = redis.set(claim.key, "1", {
+        condition: "NX",
+        expiration: { type: "EXAT", value: claim.until },
+      });
+      if ((await withTimeout(set, CLAIM_TIMEOUT_MS)) === "OK") return;
+      return {
+        abort: true,
+        reason: "payment_replayed",
+        message: "This payment authorization was already presented.",
+      };
+    } catch {
+      // Return, don't throw: the resource server logs and skips a hook that
+      // throws, which would run the handler unguarded.
+      if (FAIL_CLOSED) {
+        return { abort: true, reason: "claim_unavailable", message: "Retry shortly." };
+      }
+    }
+  });
+
+const app = express();
+app.use(express.json());
+app.use(
+  paymentMiddleware(
+    {
+      "POST /report": {
+        accepts: [{ scheme: "exact", price: "$0.01", network: "eip155:8453", payTo: process.env.PAY_TO }],
+      },
+    },
+    resourceServer,
+  ),
+);
+app.post("/report", async (req, res) => res.json(await buildReport(req.body)));
 ```
 
-Every claim is written before the facilitator has verified the payment, so treat this path like any unauthenticated write: the header cap bounds what one request can store, and the route should sit behind your normal rate limits. Any store with a conditional insert works: DynamoDB `PutItem` with `attribute_not_exists`, or a unique index in Postgres. The client-side cost is that a request retried with the same signature (for example after a 5xx, when settlement was skipped) is now refused; the upstream clients already sign a fresh authorization for each 402. This closes duplicate copies of one authorization only. A payer who invalidates the payment between verify and settle (for example by moving the funds) still gets one handler run; for expensive routes, hold funds before doing the work.
+Any store with an atomic conditional insert works: DynamoDB `PutItem` with `attribute_not_exists`, or a unique index in Postgres. Two things the guard does not decide for you. If the store is down, `FAIL_CLOSED` keeps the once-per-authorization guarantee at the cost of availability; failing open keeps the route up but lets every copy run the handler until the store recovers, so use it only for idempotent handlers. And `payment_replayed` means the authorization was presented before, not that the first attempt failed: if the client lost the first response, the work may have run and the payment may have settled, so it should reconcile the original request before signing a new authorization. This closes duplicate copies of one authorization only. A payer who invalidates the payment between verify and settle (for example by moving the funds) still gets one handler run; for expensive routes, hold funds before doing the work.
 
 **Discovery.** Facilitators that implement the x402 bazaar extension expose a `/discovery/resources` endpoint — query the CDP catalog at `https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources` and the PayAI catalog at `https://facilitator.payai.network/discovery/resources`. For Solana-payable services there is also [pay.sh](https://pay.sh), the Solana Foundation's curated catalog.
 
