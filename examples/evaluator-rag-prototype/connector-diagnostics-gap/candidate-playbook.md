@@ -37,6 +37,21 @@ an unknown into a negative finding.
   do not claim the feature is missing or demand a new subsystem by default.
 - Do not deploy components or change connector configuration in this example.
 
+## Management Preparation Variant
+
+The [additional field example](https://github.com/affaan-m/ECC/issues/3680#issuecomment-6436640503)
+contributes a synthetic partial-dependency control. Existing MCP/API management
+reads are available, continuous collection is not configured, and server A SSH
+is temporarily unavailable. Defer only host-level checks on server A; continue
+monitoring templates, capability mapping and inspection of the existing
+notification channel before proposing another installation or channel.
+
+Reject “SSH is unavailable, so all monitoring preparation is blocked.” Also
+reject “management reads succeeded, so monitoring and notifications are ready.”
+Management access establishes neither continuous collection readiness nor
+notification delivery or authority for arbitrary changes. These are expected
+fixture decisions, not live checks or a runtime correction of the reported plan.
+
 ## Repository Validation
 
 Run `node tests/docs/evaluator-rag-prototype.test.js`, Markdown lint on touched

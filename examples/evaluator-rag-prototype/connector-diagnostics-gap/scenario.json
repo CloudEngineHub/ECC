@@ -14,6 +14,11 @@
       "kind": "public_feedback",
       "url": "https://github.com/affaan-m/ECC/issues/3680",
       "purpose": "Reported workflow observation; not an ECC reproduction"
+    },
+    {
+      "kind": "public_feedback",
+      "url": "https://github.com/affaan-m/ECC/issues/3680#issuecomment-6436640503",
+      "purpose": "Reported management-transport versus collection example; synthetic variant, not historical reproduction"
     }
   ],
   "evidence_limits": "The reported connector configuration, original request, ECC activation/version and causal contribution are unverified. All connector capabilities below are synthetic evaluation inputs.",
@@ -36,7 +41,22 @@
     "unavailable_channels": [
       "Historical deployment settings could not be read"
     ],
-    "remaining_requirement": "A count of throttle events over the requested interval"
+    "remaining_requirement": "A count of throttle events over the requested interval",
+    "management_preparation": {
+      "management_access": "existing_mcp_api_reads",
+      "continuous_collection": "not_configured",
+      "unavailable_path": {
+        "path": "server A SSH",
+        "blocks": [
+          "host-level checks on server A"
+        ]
+      },
+      "independent_preparation": [
+        "prepare monitoring templates",
+        "map existing management capabilities",
+        "inspect the existing notification channel"
+      ]
+    }
   },
   "retrieval_questions": [
     "Which actual connector paths were examined?",

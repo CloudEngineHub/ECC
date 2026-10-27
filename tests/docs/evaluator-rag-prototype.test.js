@@ -460,12 +460,38 @@ test('connector report records unscored fixture coverage and verifier rollback',
     'scenario.json#/inputs/inspected_capabilities',
     'scenario.json#/inputs/unavailable_channels',
     'trace.json#/events',
-    'candidate-playbook.md#worked-comparison'
+    'candidate-playbook.md#worked-comparison',
+    'scenario.json#/inputs/management_preparation'
   ]);
   assert.ok(report.evidence_coverage.gaps.includes('Event retention and deployed settings are unknown.'));
   assert.strictEqual(report.recommended_next_action.candidate_id, verifier.promoted_candidate_id);
   assert.ok(verifier.rollback.current_run.includes('No connector state is changed'));
   assert.ok(verifier.rollback.future_extension.includes('revert the summary extension'));
+});
+
+test('connector preparation scopes unavailable SSH to dependent host checks', () => {
+  const scenario = readFixtureJson('connector-diagnostics-gap/scenario.json');
+  const verifier = readFixtureJson('connector-diagnostics-gap/verifier-result.json');
+  const variant = scenario.inputs.management_preparation;
+  assert.strictEqual(variant.management_access, 'existing_mcp_api_reads');
+  assert.strictEqual(variant.continuous_collection, 'not_configured');
+  assert.deepStrictEqual(variant.unavailable_path.blocks, ['host-level checks on server A']);
+  assert.deepStrictEqual(variant.independent_preparation, [
+    'prepare monitoring templates', 'map existing management capabilities',
+    'inspect the existing notification channel'
+  ]);
+  const decision = verifier.management_preparation;
+  assert.strictEqual(decision.decision, 'continue_independent_preparation');
+  assert.deepStrictEqual(decision.blocked_work, variant.unavailable_path.blocks);
+  assert.deepStrictEqual(decision.continue_work, variant.independent_preparation);
+  assert.deepStrictEqual(decision.not_established, [
+    'continuous collection readiness', 'notification delivery', 'authority for arbitrary changes'
+  ]);
+  assert.deepStrictEqual(decision.rejected_inferences, [
+    'unavailable SSH blocks all monitoring preparation',
+    'existing management access requires redundant installation',
+    'successful management reads prove collection or notification readiness'
+  ]);
 });
 
 if (failed > 0) {

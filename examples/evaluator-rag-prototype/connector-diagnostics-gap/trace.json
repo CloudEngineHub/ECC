@@ -25,6 +25,11 @@
       "summary": "Expected rubric comparison only: accept a bounded aggregate over existing events; reject a separate daemon justified only by unavailable settings."
     },
     {
+      "phase": "verification",
+      "variant": "management_preparation",
+      "summary": "Expected rubric only: existing MCP/API reads support template/map preparation and inspection of the existing notification channel. Unavailable server A SSH blocks only its host-level checks; collection readiness, delivery and change authority remain unestablished."
+    },
+    {
       "phase": "promotion",
       "promoted_candidate_id": "bounded-event-summary",
       "summary": "Illustrative playbook selection; no connector, service or settings are changed."
