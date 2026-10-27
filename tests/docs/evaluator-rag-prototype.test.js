@@ -441,6 +441,48 @@ test('prepared verifier artifacts preserve shared identity and illustrative deci
   assert.ok(rejected.rollback.includes('Reject this candidate'));
 });
 
+test('prepared verifier report scores cover the rubric without claiming external verification', () => {
+  const root = 'prepared-verifier-effect-state/';
+  const scenario = readFixtureJson(`${root}scenario.json`);
+  const report = readFixtureJson(`${root}report.json`);
+  const trace = readFixtureJson(`${root}trace.json`);
+  const verifier = readFixtureJson(`${root}verifier-result.json`);
+
+  assert.strictEqual(report.score_basis, 'illustrative_expected_rubric_not_external_validation');
+  assert.deepStrictEqual(report.scores, {
+    accepted_effect_preservation: 1,
+    read_contract_correction: 1,
+    unknown_outcome_reconciliation: 1,
+    preflight_dispatch_safety: 1,
+    mechanism_attribution: 1
+  });
+  assert.deepStrictEqual(report.evidence_coverage, {
+    illustrative_acceptance_gates: scenario.acceptance_gates.length,
+    total_acceptance_gates: scenario.acceptance_gates.length,
+    source_reported_mechanisms: scenario.inputs.mechanism_controls.length,
+    executed_external_checks: 0,
+    limits: scenario.evidence_limits
+  });
+  assert.strictEqual(Object.keys(report.scores).length, scenario.acceptance_gates.length);
+  const verification = trace.events.find(event => event.phase === 'verification').summary;
+  const accepted = verifier.candidates.find(candidate => candidate.decision === 'accepted');
+  for (const [traceClaim, verifierClaim] of [
+    ['OP_A accepted and apply_count=1', 'Preserves OP_A accepted status, original receipt and apply_count=1'],
+    ['correct only the read', 'Corrects the read command without inventing a successful verifier result'],
+    ['hold unknown OP_B', 'Holds unknown OP_B for targeted reconciliation before retry'],
+    ['block not-dispatched OP_C on preflight', 'Blocks OP_C before dispatch until preflight succeeds']
+  ]) {
+    assert.ok(verification.includes(traceClaim), `Missing trace claim: ${traceClaim}`);
+    assert.ok(accepted.reasons.includes(verifierClaim), `Missing verifier claim: ${verifierClaim}`);
+  }
+  assert.ok(accepted.reasons.includes('Keeps each source-reported mechanism and its evidence limits separate'));
+  const findings = report.findings.map(finding => finding.summary).join('\n');
+  const stateFinding = report.findings.find(finding => finding.id === 'two-state-axes');
+  assert.ok(stateFinding.summary.includes('An accepted effect and verifier_error can coexist'));
+  assert.ok(stateFinding.summary.includes('verifier failure does not authorize replay or rollback'));
+  assert.ok(findings.includes('distinct evidence'));
+});
+
 test('prepared verifier distinguishes accepted, unknown and not-dispatched operations', () => {
   const scenario = readFixtureJson('prepared-verifier-effect-state/scenario.json');
   const playbook = read('examples/evaluator-rag-prototype/prepared-verifier-effect-state/candidate-playbook.md');
