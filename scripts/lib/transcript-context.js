@@ -138,13 +138,13 @@ function readLatestContextTokens(transcriptPath, options = {}) {
  * @returns {{ windowTokens: number, inferred: boolean }}
  */
 function resolveContextWindow(tokens, model) {
+  const env = (typeof process !== 'undefined' && process.env) || {};
+
   // Explicit window override wins: 400k models (e.g. Opus 4.x) match neither the
   // 200k default nor the 1M marker and would otherwise report ~double usage (#2290).
-  // Honor ECC's own knob and Claude Code's native CLAUDE_CODE_AUTO_COMPACT_WINDOW.
-  const env = (typeof process !== 'undefined' && process.env) || {};
-  const envWindow = Number.parseInt(env.ECC_CONTEXT_WINDOW_TOKENS || env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '', 10);
-  if (Number.isInteger(envWindow) && envWindow > 0) {
-    return { windowTokens: envWindow, inferred: false };
+  const explicitWindow = Number.parseInt(env.ECC_CONTEXT_WINDOW_TOKENS || '', 10);
+  if (Number.isInteger(explicitWindow) && explicitWindow > 0) {
+    return { windowTokens: explicitWindow, inferred: false };
   }
 
   if (typeof model === 'string' && model.includes(LARGE_WINDOW_MODEL_MARKER)) {
@@ -162,6 +162,15 @@ function resolveContextWindow(tokens, model) {
 
   if (Number.isFinite(tokens) && tokens > STANDARD_CONTEXT_WINDOW_TOKENS) {
     return { windowTokens: LARGE_CONTEXT_WINDOW_TOKENS, inferred: true };
+  }
+
+  // Claude Code's CLAUDE_CODE_AUTO_COMPACT_WINDOW is the harness auto-compact
+  // trigger point (e.g. 786432 on a 1M-window model), not the context window
+  // size. Honor it only as a last-resort fallback so it cannot mask the [1m]
+  // marker, known large-window families, or >200k observed tokens above.
+  const autoCompactWindow = Number.parseInt(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '', 10);
+  if (Number.isInteger(autoCompactWindow) && autoCompactWindow > 0) {
+    return { windowTokens: autoCompactWindow, inferred: false };
   }
 
   return { windowTokens: STANDARD_CONTEXT_WINDOW_TOKENS, inferred: true };
