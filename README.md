@@ -1328,7 +1328,7 @@ Treat `stable`, `beta`, `experimental`, and `instruction-only` below as capabili
 | Cursor | Beta project adapter | Selective installer into `.cursor/` | Agent discovery varies by Cursor build; hook events use profile-gated dispatchers, but full Claude feature parity is not claimed. |
 | OpenCode | Beta built plugin | Build plugin, then selective installer | ECC ships a subset of the catalog; connect a provider and select a model in OpenCode ([#2617](https://github.com/affaan-m/ECC/issues/2617)). |
 | GitHub Copilot Chat | Instruction-only | Checked-in instructions and prompt files | ECC hooks are not adapted. |
-| GitHub Copilot CLI | Beta project adapter | `--target copilot` places skills and adapted agents in `.github/` | ECC hooks, rules, and command shims are not installed by this target. |
+| GitHub Copilot CLI | Beta project adapter | `--target copilot` places skills, adapted agents, and converted rules in `.github/` | ECC hooks and command shims are not installed by this target. |
 | Gemini, Zed, Antigravity, Qwen, Hermes, OpenClaw, Kimi, CodeBuddy, JoyCode | Experimental/minimal adapters | Harness-specific selective target | File placement and instruction portability are tested; full Claude feature parity is not claimed. |
 
 <details>
@@ -1801,8 +1801,10 @@ inventory to see what this checkout installs; a count is not a capability grant.
 Claude-only agent frontmatter (`model`, `tools`, `color`) is dropped during the
 copy: Copilot resolves the model from your own configuration, and it governs
 tool access per session through `--allow-tool`/`--deny-tool` rather than through
-agent frontmatter. ECC's rules, commands, and hooks are not installed by this
-target.
+agent frontmatter. Rules are installed under `.github/instructions/ecc/` as
+`.instructions.md` files, with the Claude-style `paths:` frontmatter converted
+to Copilot's `applyTo:` glob list (rules without `paths` become `applyTo:
+"**"`). ECC's commands and hooks are not installed by this target.
 
 #### Feature coverage
 
@@ -1818,6 +1820,7 @@ target.
 | Commit message format | Per-task instruction in `settings.json` |
 | Skills | Native discovery in Copilot CLI (`.github/skills/`, `.agents/skills/`) |
 | Agents / delegation | Copilot CLI custom agents (`.github/agents/`, `--agent`) |
+| Rules | Path-specific instructions (`.github/instructions/ecc/`, `applyTo:` globs) |
 | Hooks / automation | ECC's hooks are not ported (Copilot CLI has its own plugin hook system) |
 
 #### Limitations
