@@ -359,7 +359,11 @@ String port = this.getConfiguration("server.port");
 - **ANSI コンソールカラー**：コンソール出力はログレベルに応じて色分けされます（SEVERE は赤、WARNING は黄、INFO は緑、CONFIG はシアン、FINE/デバッグログはグレー）。
 - **正確な呼び出し元トレース**：Java の `StackWalker` API を使用して実行時のコールスタックをトレースします。ログを発生させた呼び出し元の正確なクラス、メソッド、ファイル名、行番号を特定してログに記録します（内部のユーティリティ層やロギング層は経由しません）。
 - **パッケージ/ロガーレベルの上書き**：`application.properties` にパッケージ単位の上書きを直接設定できます（例：`org.tinystruct.level=FINE`）。
-- **設定可能なハンドラ**：`handlers` プロパティで作成するハンドラを列挙します。デフォルトは `java.util.logging.ConsoleHandler` です。各ハンドラは自身の `<handler>.level`、`<handler>.formatter`、`<handler>.encoding` を読み取ります。`java.util.logging.FileHandler` はオプトインで、`java.util.logging.FileHandler.pattern` が必要です。`limit`（デフォルト `0`、無制限）、`count`（デフォルト `1`）、`append`（デフォルト `true`）でローテーションを制御します。ANSI カラーはコンソール出力にのみ適用され、ログファイルには適用されません。
+- **有効/無効とレベル**：`logging.enabled=false` ですべてのロギングが無効になります。`logging.level` はルートロガーのレベルを設定し、`OFF`、`SEVERE`/`ERROR`、`WARNING`/`WARN`、`INFO`、`CONFIG`、`FINE`/`DEBUG`、`FINER`、`FINEST`/`TRACE`、`ALL` を受け付けます（デフォルトは `INFO`）。
+- **設定可能なハンドラ**：`handlers` プロパティで作成するハンドラを列挙します（カンマまたは空白区切り）。デフォルトは `java.util.logging.ConsoleHandler` です。各ハンドラは自身の `<handler>.level`（デフォルト `ALL`）、`<handler>.formatter`、`<handler>.encoding` を読み取ります。パブリックな引数なしコンストラクタを持つ `java.util.logging.Handler` や `Formatter` のクラスを指定できます。不明なフォーマッタは組み込みの `LogFormatter` にフォールバックし、作成できないハンドラは標準エラーに報告されますが、他のハンドラは起動します。
+- **FileHandler**：オプトインです。`java.util.logging.FileHandler.pattern` は省略可能で（デフォルトは `%h/java%u.log`、ユーザーのホームディレクトリ）、親ディレクトリが存在しなければ作成されます。`limit`（デフォルト `0`、無制限）、`count`（デフォルト `1`）、`append`（デフォルト `true`）でローテーションを制御します。ANSI カラーはコンソール出力にのみ適用され、ログファイルには適用されません。
+- **2つのレベルゲート**：ログレコードはロガーのレベルとハンドラのレベルの両方を通過する必要があります。ハンドラを `FINE` に上げても、ロガーが許可しない限り何も表示されません。たとえば `logging.level=FINE` や、`org.tinystruct.level=FINE` のようなパッケージ単位の上書きを設定してください。
+- **適用タイミング**：ロギング設定は `ApplicationManager` の初期化時に `application.properties` から一度だけ読み込まれます。変更後はアプリケーションを再起動してください。
 
 ## 静的ファイル
 
@@ -384,7 +388,8 @@ String port = this.getConfiguration("server.port");
 | 同じパスの2つのメソッドで、意図しない方が呼ばれる | 明示的な `mode`（例：`HTTP_GET` と `HTTP_POST`）を設定して区別する。 |
 | `bin/dispatcher` が "The action is not allowed to be executed." で失敗する | そのアクションはHTTP固有のモードを持っており、CLIからは呼び出せない。HTTPでテストするか、デュアルモードにしたい場合は `mode` を外す。 |
 | ファイルが存在するのに静的ファイルが404を返す | `server.static.dirs` / `server.static.dir`（デフォルト `static/`）のみが配信される。隠しファイル、`..` を含むパス、プロジェクトルート直下のファイルは常に拒否される。 |
-| ログファイルが書き出されない | `FileHandler` はオプトイン：`handlers` に `java.util.logging.FileHandler` を追加し、`java.util.logging.FileHandler.pattern` を設定する。 |
+| ログファイルが書き出されない | `FileHandler` はオプトイン：`handlers` に `java.util.logging.FileHandler` を追加する。`java.util.logging.FileHandler.pattern` を設定しない場合、ファイルは `%h/java%u.log`（ホームディレクトリ）に作成される。 |
+| `FINE` / デバッグメッセージが表示されない | 両方のゲートが許可する必要がある：`logging.level=FINE`（または `org.tinystruct.level=FINE` のようなパッケージ単位の上書き）を設定し、ハンドラの `.level` がそれより厳しくないことを確認する。 |
 
 ## ベストプラクティス
 

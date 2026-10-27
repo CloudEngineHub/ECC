@@ -360,7 +360,11 @@ The framework includes a programmatic wrapper around `java.util.logging` (JUL) t
 - **ANSI Console Colors**: Console output is color-coded based on the log level (red for SEVERE, yellow for WARNING, green for INFO, cyan for CONFIG, and grey for FINE/debug logs).
 - **Precise Caller Tracing**: Uses Java's `StackWalker` API to trace the call stack at runtime. It identifies and logs the exact class, method, filename, and line number of the caller that initiated the log (bypassing internal utility and logging layers).
 - **Package/Logger Level Overrides**: Set package-specific overrides directly in `application.properties` (e.g., `org.tinystruct.level=FINE`).
-- **Configurable Handlers**: The `handlers` property lists the handlers to create; it defaults to `java.util.logging.ConsoleHandler`. Each handler reads its own `<handler>.level`, `<handler>.formatter` and `<handler>.encoding`. `java.util.logging.FileHandler` is opt-in and needs `java.util.logging.FileHandler.pattern`; `limit` (default `0`, unlimited), `count` (default `1`) and `append` (default `true`) control rotation. ANSI colors are applied to console output only, never to log files.
+- **Switch and Level**: `logging.enabled=false` turns all logging off. `logging.level` sets the root logger level and accepts `OFF`, `SEVERE`/`ERROR`, `WARNING`/`WARN`, `INFO`, `CONFIG`, `FINE`/`DEBUG`, `FINER`, `FINEST`/`TRACE` and `ALL` (default `INFO`).
+- **Configurable Handlers**: The `handlers` property lists the handlers to create (comma- or whitespace-separated); it defaults to `java.util.logging.ConsoleHandler`. Each handler reads its own `<handler>.level` (default `ALL`), `<handler>.formatter` and `<handler>.encoding`. Any `java.util.logging.Handler` or `Formatter` class with a public no-argument constructor can be named; an unknown formatter falls back to the built-in `LogFormatter`, and a handler that cannot be created is reported on stderr while the others still start.
+- **FileHandler**: Opt-in. `java.util.logging.FileHandler.pattern` is optional (default `%h/java%u.log`, in the user's home directory) and its parent directory is created if missing. `limit` (default `0`, unlimited), `count` (default `1`) and `append` (default `true`) control rotation. ANSI colors are applied to console output only, never to log files.
+- **Two Level Gates**: A record must pass both the logger level and the handler level. Raising a handler to `FINE` shows nothing until the logger allows it too, for example `logging.level=FINE` or a package override such as `org.tinystruct.level=FINE`.
+- **When It Applies**: The logging configuration is read once from `application.properties` when `ApplicationManager` initializes; restart the application after changing it.
 
 ## Static Files
 
@@ -385,7 +389,8 @@ The built-in `HttpServer` serves static files only from the directories named by
 | Two methods same path, wrong one fires | Set explicit `mode` (e.g., `HTTP_GET` vs `HTTP_POST`) to disambiguate. |
 | `bin/dispatcher` fails with "The action is not allowed to be executed." | The action has an HTTP-specific mode; it is not reachable from the CLI. Test it over HTTP, or drop `mode` if it should be dual-mode. |
 | A static file returns 404 though it exists | Only `server.static.dirs` / `server.static.dir` (default `static/`) are served; hidden files, `..` paths and project-root files are always refused. |
-| No log file is written | `FileHandler` is opt-in: add `java.util.logging.FileHandler` to `handlers` and set `java.util.logging.FileHandler.pattern`. |
+| No log file is written | `FileHandler` is opt-in: add `java.util.logging.FileHandler` to `handlers`. Set `java.util.logging.FileHandler.pattern` or the file lands in `%h/java%u.log` (your home directory). |
+| `FINE` / debug messages never appear | Both gates must allow them: set `logging.level=FINE` (or a package override like `org.tinystruct.level=FINE`) and make sure the handler's `.level` is not stricter. |
 
 ## Best Practices
 
