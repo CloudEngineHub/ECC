@@ -3,7 +3,7 @@ name: tinystruct-patterns
 description: tinystruct Java フレームワークで開発する際の専門ガイダンス。tinystruct コードベース、または tinystruct 上に構築されたあらゆるプロジェクトで作業する際に使用します — プロジェクトに存在しない場合の bin/dispatcher・bin/dispatcher.cmd 起動スクリプトの生成、Application クラスの作成、@Action によるルート定義、ユニットテスト、ActionRegistry、HTTP/CLI デュアルモード対応、組み込み HTTP サーバー、イベントシステム、Builder/Builders による JSON 処理、AbstractData によるデータベース永続化、POJO 生成、Server-Sent Events (SSE)、ファイルアップロード、アウトバウンド HTTP 通信を含みます。
 metadata:
   origin: ECC
-  upstream: tinystruct==1.7.34
+  upstream: tinystruct==1.7.37
 ---
 
 # tinystruct 開発パターン
@@ -12,11 +12,11 @@ metadata:
 
 ## コア原則
 
-**CLI と HTTP は等しい市民（equal citizens）です。** `@Action` でアノテーションされたすべてのメソッドは、理想的には変更なしでターミナルとWebブラウザの両方から実行可能であるべきです。この「デュアルモード」対応能力が tinystruct のコア設計思想です。
+**CLI と HTTP は等しい市民（equal citizens）です。** トランスポート中立な `@Action`（`mode` を指定しないもの、つまり `Mode.DEFAULT`）は、変更なしでターミナルとWebブラウザの両方から実行できます。この「デュアルモード」対応能力が tinystruct のコア設計思想です。トランスポート固有のモード（`Mode.CLI`、`Mode.HTTP_GET`、`Mode.HTTP_POST` など）を持つアクションは意図的にそのトランスポートに限定されており、もう一方から呼び出すとフレームワークは "The action is not allowed to be executed." で拒否します。
 
 ## 主要な開発ツール：`bin/dispatcher`
 
-**`bin/dispatcher` は tinystruct アプリケーションを開発・実行・テスト・デバッグするためのデフォルトかつ最優先のツールです — IDE の実行構成、手書きの `main()`、curl、ブラウザよりも先にこれを使ってください。** すべての `@Action` は設計上デュアルモードであるため、`bin/dispatcher` を使うことでサーバーやブラウザを必要とせず、ターミナルから直接ルーティング・引数バインディング・ビジネスロジックを、最速のフィードバックループで検証できます。
+**`bin/dispatcher` は tinystruct アプリケーションを開発・実行・テスト・デバッグするためのデフォルトかつ最優先のツールです — IDE の実行構成、手書きの `main()`、curl、ブラウザよりも先にこれを使ってください。** トランスポート中立な `@Action` メソッドは設計上デュアルモードであるため、`bin/dispatcher` を使うことでサーバーやブラウザを必要とせず、ターミナルから直接ルーティング・引数バインディング・ビジネスロジックを、最速のフィードバックループで検証できます。HTTPメソッドに限定されたアクション（`Mode.HTTP_POST`、`Mode.HTTP_GET` など）は `bin/dispatcher` からは呼び出せないため、起動中のサーバーに対してHTTPクライアントでテストしてください。
 
 ```bash
 # @Action を直接実行 - 新しいアクションが動作するか確認する最速の方法
@@ -36,7 +36,7 @@ bin/dispatcher --help
 bin/dispatcher --version
 ```
 
-このワークフローをデフォルトにしてください：`@Action` を実装したら、`bin/dispatcher <action>` ですぐに実行して CLI モードで正しく動作することを確認し、Web向けのパス（例：`mode = Mode.HTTP_POST`、セッション、ファイルアップロードなど）を検証する必要があるときだけ HTTP サーバー（これも `bin/dispatcher start ...` で）を起動します。アプリのエントリポイントとして `main(String[] args)` を決してハードコードしないでください — `bin/dispatcher`（Windows では `bin/dispatcher.cmd`）がすべてのモジュールの唯一のエントリポイントです。
+このワークフローをデフォルトにしてください：トランスポート中立な `@Action` を実装したら、`bin/dispatcher <action>` ですぐに実行して CLI モードで正しく動作することを確認し、Web向けのパス（例：`mode = Mode.HTTP_POST`、セッション、ファイルアップロードなど）を検証する必要があるときだけ HTTP サーバー（これも `bin/dispatcher start ...` で）を起動します。HTTP専用のアクションではCLIの手順を省略してHTTPでテストし、`Mode.CLI` のアクションではサーバーは不要です。アプリのエントリポイントとして `main(String[] args)` を決してハードコードしないでください — `bin/dispatcher`（Windows では `bin/dispatcher.cmd`）がすべてのモジュールの唯一のエントリポイントです。
 
 ### `bin/dispatcher` と `bin/dispatcher.cmd` の生成
 
@@ -139,7 +139,17 @@ public class MyService extends AbstractApplication {
 ```java
 @Action(value = "login", mode = Mode.HTTP_POST)
 public String doLogin(Request<?, ?> request) throws ApplicationException {
-    request.getSession().setAttribute("userId", "42");
+    String username = request.getParameter("username");
+    String password = request.getParameter("password");
+
+    // AuthService はアプリケーション独自のクラスであり、tinystruct の一部ではない
+    String userId = AuthService.getInstance().authenticate(username, password); // 失敗時は null
+    if (userId == null) {
+        throw new ApplicationException("Invalid credentials");
+    }
+
+    // 認証に成功した後にのみセッションを操作する
+    request.getSession().setAttribute("userId", userId);
     return "Logged in";
 }
 ```
@@ -223,7 +233,7 @@ MCP API（例：`org.tinystruct.mcp.MCPTool`、`org.tinystruct.mcp.MCPServer`、
 <dependency>
     <groupId>org.tinystruct</groupId>
     <artifactId>tinystruct</artifactId>
-    <version>1.7.34</version>
+    <version>1.7.37</version>
 </dependency>
 ```
 
@@ -312,6 +322,9 @@ database.password=
 default.home.page=hello
 server.port=8080
 default.server.open_browser=true
+# 静的ファイルはこれらのディレクトリ（カンマまたはセミコロン区切り）からのみ配信されます。
+# ディレクトリは作業ディレクトリのサブディレクトリである必要があります。デフォルト：static
+# server.static.dirs=static,public
 
 # ロケール
 default.language=en_US
@@ -325,6 +338,13 @@ default.language=en_US
 logging.enabled=true
 logging.level=INFO
 org.tinystruct.level=FINE
+# 作成するハンドラ（カンマまたは空白区切り）。デフォルト：ConsoleHandler のみ
+handlers=java.util.logging.ConsoleHandler
+# ローテーション付きのログファイルも書き出すには、FileHandler を追加する：
+# handlers=java.util.logging.ConsoleHandler, java.util.logging.FileHandler
+# java.util.logging.FileHandler.pattern=logs/tinystruct-%g.log
+# java.util.logging.FileHandler.limit=10485760
+# java.util.logging.FileHandler.count=5
 ```
 
 アプリケーション内で設定値にアクセスする：
@@ -339,6 +359,11 @@ String port = this.getConfiguration("server.port");
 - **ANSI コンソールカラー**：コンソール出力はログレベルに応じて色分けされます（SEVERE は赤、WARNING は黄、INFO は緑、CONFIG はシアン、FINE/デバッグログはグレー）。
 - **正確な呼び出し元トレース**：Java の `StackWalker` API を使用して実行時のコールスタックをトレースします。ログを発生させた呼び出し元の正確なクラス、メソッド、ファイル名、行番号を特定してログに記録します（内部のユーティリティ層やロギング層は経由しません）。
 - **パッケージ/ロガーレベルの上書き**：`application.properties` にパッケージ単位の上書きを直接設定できます（例：`org.tinystruct.level=FINE`）。
+- **設定可能なハンドラ**：`handlers` プロパティで作成するハンドラを列挙します。デフォルトは `java.util.logging.ConsoleHandler` です。各ハンドラは自身の `<handler>.level`、`<handler>.formatter`、`<handler>.encoding` を読み取ります。`java.util.logging.FileHandler` はオプトインで、`java.util.logging.FileHandler.pattern` が必要です。`limit`（デフォルト `0`、無制限）、`count`（デフォルト `1`）、`append`（デフォルト `true`）でローテーションを制御します。ANSI カラーはコンソール出力にのみ適用され、ログファイルには適用されません。
+
+## 静的ファイル
+
+組み込みの `HttpServer` は、`server.static.dirs`（カンマまたはセミコロン区切り）、それがなければ `server.static.dir` で指定されたディレクトリからのみ静的ファイルを配信します。デフォルトは `static` です。各ディレクトリは作業ディレクトリのサブディレクトリである必要があり、そうでない場合、そのディレクトリの静的配信は無効になり警告がログに記録されます。`.` や `..` のセグメントを含むリクエスト、隠しファイルやフォルダ（`.git` や `.env` など `.` で始まるもの）を指すリクエスト、`.` や空白で終わる名前、プロジェクトルート直下のファイルを指すリクエストは拒否されます。プロジェクトルートが配信されることを期待せず、公開アセットは `static/` 配下に置いてください。
 
 ## レッドフラグとアンチパターン
 
@@ -357,6 +382,9 @@ String port = this.getConfiguration("server.port");
 | 実行時にアクションが見つからない | クラスが `--import` でインポートされているか、`application.properties` に列挙されているか確認する。 |
 | CLI引数が認識されない | `--key value` の形で渡し、`getContext().getAttribute("--key")` でアクセスする。 |
 | 同じパスの2つのメソッドで、意図しない方が呼ばれる | 明示的な `mode`（例：`HTTP_GET` と `HTTP_POST`）を設定して区別する。 |
+| `bin/dispatcher` が "The action is not allowed to be executed." で失敗する | そのアクションはHTTP固有のモードを持っており、CLIからは呼び出せない。HTTPでテストするか、デュアルモードにしたい場合は `mode` を外す。 |
+| ファイルが存在するのに静的ファイルが404を返す | `server.static.dirs` / `server.static.dir`（デフォルト `static/`）のみが配信される。隠しファイル、`..` を含むパス、プロジェクトルート直下のファイルは常に拒否される。 |
+| ログファイルが書き出されない | `FileHandler` はオプトイン：`handlers` に `java.util.logging.FileHandler` を追加し、`java.util.logging.FileHandler.pattern` を設定する。 |
 
 ## ベストプラクティス
 

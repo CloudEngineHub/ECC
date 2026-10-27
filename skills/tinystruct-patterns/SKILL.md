@@ -3,7 +3,7 @@ name: tinystruct-patterns
 description: Expert guidance for developing with the tinystruct Java framework. Use when working on the tinystruct codebase or any project built on tinystruct — including generating the bin/dispatcher and bin/dispatcher.cmd launcher scripts when a project lacks them, creating Application classes, @Action-mapped routes, unit tests, ActionRegistry, HTTP/CLI dual-mode handling, the built-in HTTP server, the event system, JSON with Builder/Builders, database persistence with AbstractData, POJO generation, Server-Sent Events (SSE), file uploads, and outbound HTTP networking.
 metadata:
   origin: ECC
-  upstream: tinystruct==1.7.34
+  upstream: tinystruct==1.7.37
 ---
 
 # tinystruct Development Patterns
@@ -12,11 +12,11 @@ Architecture and implementation patterns for building modules with the **tinystr
 
 ## Core Principle
 
-**CLI and HTTP are equal citizens.** Every method annotated with `@Action` should ideally be runnable from both a terminal and a web browser without modification. This "dual-mode" capability is the core design philosophy of tinystruct.
+**CLI and HTTP are equal citizens.** Every transport-neutral `@Action` (one with no `mode`, i.e. `Mode.DEFAULT`) can be run from both a terminal and a web browser without modification. This "dual-mode" capability is the core design philosophy of tinystruct. An action with a transport-specific mode (`Mode.CLI`, `Mode.HTTP_GET`, `Mode.HTTP_POST`, ...) is deliberately bound to that transport: the framework rejects it from the other one with "The action is not allowed to be executed."
 
 ## Primary Development Tool: `bin/dispatcher`
 
-**`bin/dispatcher` is the default, highest-priority tool for developing, running, testing, and debugging a tinystruct application — reach for it before an IDE run configuration, a hand-written `main()`, curl, or a browser.** Because every `@Action` is dual-mode by design, `bin/dispatcher` lets you exercise routing, argument binding, and business logic directly from the terminal, with the fastest possible feedback loop and no server/browser required.
+**`bin/dispatcher` is the default, highest-priority tool for developing, running, testing, and debugging a tinystruct application — reach for it before an IDE run configuration, a hand-written `main()`, curl, or a browser.** Because transport-neutral `@Action` methods are dual-mode by design, `bin/dispatcher` lets you exercise routing, argument binding, and business logic directly from the terminal, with the fastest possible feedback loop and no server/browser required. Actions bound to an HTTP method (`Mode.HTTP_POST`, `Mode.HTTP_GET`, ...) cannot be reached from `bin/dispatcher`; test those through an HTTP client against the running server.
 
 ```bash
 # Run any @Action directly - the fastest way to verify a new action works
@@ -36,7 +36,7 @@ bin/dispatcher --help
 bin/dispatcher --version
 ```
 
-Default to this workflow: implement the `@Action`, run it immediately via `bin/dispatcher <action>` to confirm it behaves correctly in CLI mode, and only start the HTTP server (also via `bin/dispatcher start ...`) once you need to verify the web-facing path (e.g. `mode = Mode.HTTP_POST`, sessions, file uploads). Never hardcode a `main(String[] args)` as an app's entry point — `bin/dispatcher` (or `bin/dispatcher.cmd` on Windows) is the one entry point for every module.
+Default to this workflow: implement a transport-neutral `@Action`, run it immediately via `bin/dispatcher <action>` to confirm it behaves correctly in CLI mode, and only start the HTTP server (also via `bin/dispatcher start ...`) once you need to verify the web-facing path (e.g. `mode = Mode.HTTP_POST`, sessions, file uploads). For HTTP-only actions skip the CLI step and test them over HTTP; for `Mode.CLI` actions no server is needed. Never hardcode a `main(String[] args)` as an app's entry point — `bin/dispatcher` (or `bin/dispatcher.cmd` on Windows) is the one entry point for every module.
 
 ### Generating `bin/dispatcher` and `bin/dispatcher.cmd`
 
@@ -139,7 +139,17 @@ public class MyService extends AbstractApplication {
 ```java
 @Action(value = "login", mode = Mode.HTTP_POST)
 public String doLogin(Request<?, ?> request) throws ApplicationException {
-    request.getSession().setAttribute("userId", "42");
+    String username = request.getParameter("username");
+    String password = request.getParameter("password");
+
+    // AuthService is your application's own class, not part of tinystruct
+    String userId = AuthService.getInstance().authenticate(username, password); // null on failure
+    if (userId == null) {
+        throw new ApplicationException("Invalid credentials");
+    }
+
+    // Only touch the session after a successful authentication
+    request.getSession().setAttribute("userId", userId);
     return "Logged in";
 }
 ```
@@ -224,7 +234,7 @@ The MCP APIs (e.g., `org.tinystruct.mcp.MCPTool`, `org.tinystruct.mcp.MCPServer`
 <dependency>
     <groupId>org.tinystruct</groupId>
     <artifactId>tinystruct</artifactId>
-    <version>1.7.34</version>
+    <version>1.7.37</version>
 </dependency>
 ```
 
@@ -313,6 +323,9 @@ database.password=
 default.home.page=hello
 server.port=8080
 default.server.open_browser=true
+# Static files are served only from these directories (comma- or semicolon-separated),
+# which must be sub-directories of the working directory. Default: static
+# server.static.dirs=static,public
 
 # Locale
 default.language=en_US
@@ -326,6 +339,13 @@ default.language=en_US
 logging.enabled=true
 logging.level=INFO
 org.tinystruct.level=FINE
+# Handlers to create (comma- or whitespace-separated). Default: ConsoleHandler only
+handlers=java.util.logging.ConsoleHandler
+# To also write rotating log files, append the FileHandler:
+# handlers=java.util.logging.ConsoleHandler, java.util.logging.FileHandler
+# java.util.logging.FileHandler.pattern=logs/tinystruct-%g.log
+# java.util.logging.FileHandler.limit=10485760
+# java.util.logging.FileHandler.count=5
 ```
 
 Access config values in your application:
@@ -340,6 +360,11 @@ The framework includes a programmatic wrapper around `java.util.logging` (JUL) t
 - **ANSI Console Colors**: Console output is color-coded based on the log level (red for SEVERE, yellow for WARNING, green for INFO, cyan for CONFIG, and grey for FINE/debug logs).
 - **Precise Caller Tracing**: Uses Java's `StackWalker` API to trace the call stack at runtime. It identifies and logs the exact class, method, filename, and line number of the caller that initiated the log (bypassing internal utility and logging layers).
 - **Package/Logger Level Overrides**: Set package-specific overrides directly in `application.properties` (e.g., `org.tinystruct.level=FINE`).
+- **Configurable Handlers**: The `handlers` property lists the handlers to create; it defaults to `java.util.logging.ConsoleHandler`. Each handler reads its own `<handler>.level`, `<handler>.formatter` and `<handler>.encoding`. `java.util.logging.FileHandler` is opt-in and needs `java.util.logging.FileHandler.pattern`; `limit` (default `0`, unlimited), `count` (default `1`) and `append` (default `true`) control rotation. ANSI colors are applied to console output only, never to log files.
+
+## Static Files
+
+The built-in `HttpServer` serves static files only from the directories named by `server.static.dirs` (comma- or semicolon-separated) or, failing that, `server.static.dir`; the default is `static`. Each directory must be a sub-directory of the working directory, otherwise static serving is disabled for it and a warning is logged. Requests are rejected when they contain `.` or `..` segments, name hidden files or folders (anything starting with `.`, such as `.git` or `.env`), end in `.` or a space, or point at files in the project root. Put public assets under `static/` rather than expecting the project root to be served.
 
 ## Red Flags & Anti-patterns
 
@@ -358,6 +383,9 @@ The framework includes a programmatic wrapper around `java.util.logging` (JUL) t
 | Action not found at runtime | Ensure class is imported via `--import` or listed in `application.properties`. |
 | CLI arg not visible | Pass with `--key value`; access via `getContext().getAttribute("--key")`. |
 | Two methods same path, wrong one fires | Set explicit `mode` (e.g., `HTTP_GET` vs `HTTP_POST`) to disambiguate. |
+| `bin/dispatcher` fails with "The action is not allowed to be executed." | The action has an HTTP-specific mode; it is not reachable from the CLI. Test it over HTTP, or drop `mode` if it should be dual-mode. |
+| A static file returns 404 though it exists | Only `server.static.dirs` / `server.static.dir` (default `static/`) are served; hidden files, `..` paths and project-root files are always refused. |
+| No log file is written | `FileHandler` is opt-in: add `java.util.logging.FileHandler` to `handlers` and set `java.util.logging.FileHandler.pattern`. |
 
 ## Best Practices
 
