@@ -90,7 +90,7 @@ bin/dispatcher.cmd text eol=crlf
 
 ### 使用する場面
 
-- `bin/dispatcher` を通じて `@Action` を実行・テスト・デバッグするとき — これは HTTP や IDE の実行構成に頼る前の、tinystruct アプリを扱うデフォルトの方法です。
+- `bin/dispatcher` を通じて、トランスポート中立または `Mode.CLI` の `@Action` を実行・テスト・デバッグするとき — これは HTTP や IDE の実行構成に頼る前の、tinystruct アプリを扱うデフォルトの方法です。HTTP専用のアクションは、代わりにHTTPでテストします。
 - `bin/dispatcher` / `bin/dispatcher.cmd` が存在しないプロジェクトをセットアップするとき — フレームワークに生成させてください（「`bin/dispatcher` と `bin/dispatcher.cmd` の生成」を参照）。
 - `AbstractApplication` を拡張して新しい `Application` モジュールを作成するとき。
 - `@Action` を使用してルートとコマンドラインアクションを定義するとき。
@@ -106,7 +106,7 @@ bin/dispatcher.cmd text eol=crlf
 
 ## 動作の仕組み
 
-tinystruct フレームワークは、`@Action` でアノテーションされたメソッドをターミナルとWeb環境の両方でルーティング可能なエンドポイントとして扱います。アプリケーションは `AbstractApplication` を拡張することで作成され、`init()` などのコアライフサイクルフックとリクエスト `Context` へのアクセスが提供されます。
+tinystruct フレームワークは、`@Action` でアノテーションされたメソッドをルーティング可能なエンドポイントとして扱います。`mode` を指定しない場合はターミナルとWeb環境の両方から到達でき、`mode = Mode.CLI` や `Mode.HTTP_POST` などのHTTPモードを指定した場合は、そのトランスポートからのみ到達できます。アプリケーションは `AbstractApplication` を拡張することで作成され、`init()` などのコアライフサイクルフックとリクエスト `Context` へのアクセスが提供されます。
 
 ルーティングは `ActionRegistry` によって処理され、パスセグメントをメソッド引数に自動的にマッピングして依存関係を注入します。データのみのサービスでは、ゼロ依存のフットプリントを維持するために、JSONシリアライゼーションにネイティブの `Builder` と `Builders` コンポーネントを使用すべきです。データベース層は `@Table`/`@Column` アノテーションまたは XML マッピングファイルでテーブルにマッピングされた `AbstractData` POJO を使用し、外部 ORM ライブラリなしで CRUD 操作を行います。不足しているテーブルは `database.autocreate=true` で自動的に作成できます。
 
@@ -345,6 +345,9 @@ handlers=java.util.logging.ConsoleHandler
 # java.util.logging.FileHandler.pattern=logs/tinystruct-%g.log
 # java.util.logging.FileHandler.limit=10485760
 # java.util.logging.FileHandler.count=5
+# java.util.logging.FileHandler.level=INFO
+# java.util.logging.FileHandler.formatter=org.tinystruct.system.logging.LogFormatter
+# java.util.logging.FileHandler.encoding=UTF-8
 ```
 
 アプリケーション内で設定値にアクセスする：
@@ -361,7 +364,7 @@ String port = this.getConfiguration("server.port");
 - **パッケージ/ロガーレベルの上書き**：`application.properties` にパッケージ単位の上書きを直接設定できます（例：`org.tinystruct.level=FINE`）。
 - **有効/無効とレベル**：`logging.enabled=false` ですべてのロギングが無効になります。`logging.level` はルートロガーのレベルを設定し、`OFF`、`SEVERE`/`ERROR`、`WARNING`/`WARN`、`INFO`、`CONFIG`、`FINE`/`DEBUG`、`FINER`、`FINEST`/`TRACE`、`ALL` を受け付けます（デフォルトは `INFO`）。
 - **設定可能なハンドラ**：`handlers` プロパティで作成するハンドラを列挙します（カンマまたは空白区切り）。デフォルトは `java.util.logging.ConsoleHandler` です。各ハンドラは自身の `<handler>.level`（デフォルト `ALL`）、`<handler>.formatter`、`<handler>.encoding` を読み取ります。パブリックな引数なしコンストラクタを持つ `java.util.logging.Handler` や `Formatter` のクラスを指定できます。不明なフォーマッタは組み込みの `LogFormatter` にフォールバックし、作成できないハンドラは標準エラーに報告されますが、他のハンドラは起動します。
-- **FileHandler**：オプトインです。`java.util.logging.FileHandler.pattern` は省略可能で（デフォルトは `%h/java%u.log`、ユーザーのホームディレクトリ）、親ディレクトリが存在しなければ作成されます。`limit`（デフォルト `0`、無制限）、`count`（デフォルト `1`）、`append`（デフォルト `true`）でローテーションを制御します。ANSI カラーはコンソール出力にのみ適用され、ログファイルには適用されません。
+- **FileHandler**：オプトインです。`java.util.logging.FileHandler.pattern` は省略可能で（デフォルトは `%h/java%u.log`、ユーザーのホームディレクトリ）、親ディレクトリが存在しなければ作成されます。`logs/tinystruct-%g.log` のような相対パターンは、アプリケーションを起動したディレクトリ（そこで `bin/dispatcher` を実行する場合はプロジェクトルート）を基準に解決されます。`limit`（デフォルト `0`、無制限。それ以外は1ファイルあたりの最大バイト数）、`count`（デフォルト `1`、保持するファイル数）、`append`（デフォルト `true`）でローテーションを制御します。パターン中の `%g` はローテーション番号で、`count=5` なら `tinystruct-0.log` から `tinystruct-4.log` が作られます。有効にするには、`handlers` に `java.util.logging.FileHandler` を追加し、上記のプロパティを設定して、再起動します。ANSI カラーはコンソール出力にのみ適用され、ログファイルには適用されません。
 - **2つのレベルゲート**：ログレコードはロガーのレベルとハンドラのレベルの両方を通過する必要があります。ハンドラを `FINE` に上げても、ロガーが許可しない限り何も表示されません。たとえば `logging.level=FINE` や、`org.tinystruct.level=FINE` のようなパッケージ単位の上書きを設定してください。
 - **適用タイミング**：ロギング設定は `ApplicationManager` の初期化時に `application.properties` から一度だけ読み込まれます。変更後はアプリケーションを再起動してください。
 
@@ -377,7 +380,7 @@ String port = this.getConfiguration("server.port");
 | JSON配列に `List<Builder>` を使用する | ジェネリックの型消去の問題を避けるため `Builders` を使用する。 |
 | `ApplicationRuntimeException: template not found` | API専用アプリでは `init()` 内で `setTemplateRequired(false)` を呼び出す。 |
 | `private` メソッドへの `@Action` アノテーション | アクションはフレームワークに登録されるために `public` である必要がある。 |
-| アプリ内で `main(String[] args)` をハードコードする、または curl/ブラウザ/IDE の実行構成だけでテストする | すべてのモジュールのエントリポイント兼デフォルトの開発/テストツールとして `bin/dispatcher` を使用する。 |
+| アプリ内で `main(String[] args)` をハードコードする、または curl/ブラウザ/IDE の実行構成だけでテストする | すべてのモジュールのエントリポイントとして、またトランスポート中立およびCLIアクションのデフォルトの開発/テストツールとして `bin/dispatcher` を使用する（HTTP専用のアクションは、それが起動するサーバーに対してHTTPでテストする）。 |
 | `bin/dispatcher` が存在しない、または手書き・コピーされた起動スクリプトになっている | フレームワークに生成させる：プロジェクトルートから `org.tinystruct.system.Dispatcher --version` を一度実行する（現在のOS用のスクリプトが作成される）。 |
 | Windows で `bin/dispatcher` が `ClassNotFoundException: org.tinystruct.system.Dispatcher` で失敗する | シェルスクリプトは Git Bash/MSYS 上では実行できない。`bin\dispatcher.cmd` または WSL を使用する。 |
 | `--import a.A,b.B` で `ClassNotFoundException` が発生する | クラスごとに `--import` を1つ：`--import a.A --import b.B`。 |
@@ -393,7 +396,7 @@ String port = this.getConfiguration("server.port");
 
 ## ベストプラクティス
 
-1. **`bin/dispatcher` を最優先に**：何よりもまず `bin/dispatcher` に対して開発・検証を行ってください — CLI からアクションを実行して挙動を確認し、その後 HTTP/モードに関する関心事を積み重ねます。これが最速のインナーループであり、フレームワークが実際にルーティングと引数バインディングを行う方法と確実に一致する唯一のツールです。
+1. **`bin/dispatcher` を最優先に**：トランスポート中立および `Mode.CLI` のアクションでは、何よりもまず `bin/dispatcher` に対して開発・検証を行ってください — CLI からアクションを実行して挙動を確認し、その後 HTTP/モードに関する関心事を積み重ねます。HTTPモード（`Mode.HTTP_POST` など）のアクションはCLIからは拒否されるため、サーバーを起動してHTTPでテストしてください。これが最速のインナーループであり、フレームワークが実際にルーティングと引数バインディングを行う方法と確実に一致する唯一のツールです。
 2. **粒度の細かいアプリケーション**：巨大な単一クラスではなく、ロジックを小さく焦点を絞ったアプリケーションに分割する。
 3. **`init()` でのセットアップ**：コンストラクタではなく `init()` をセットアップ（設定、DB など）に活用する。`setAction()` を呼び出さず、`@Action` アノテーションを使用する。
 4. **モードへの意識**：`@Action` の `Mode` パラメータを使用して、機密性の高い操作を `CLI` のみ、または特定の HTTP メソッドに制限する。
