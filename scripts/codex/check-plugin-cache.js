@@ -231,7 +231,7 @@ function checkCache(options) {
     } else {
       log('Follow the requested plugin marketplace instructions to refresh and re-add that native plugin.');
     }
-    log('Restart Codex, confirm the active plugin root with codex plugin list --json, and re-run this checker against that root.');
+    log('Restart Codex, confirm the active plugin root with codex plugin list --json, and re-run this checker with --plugin-dir ACTIVE_ROOT (or --version ACTIVE_VERSION).');
     log('See .codex-plugin/README.md for native cache recovery and runtime dependency instructions.');
     return 1;
   }

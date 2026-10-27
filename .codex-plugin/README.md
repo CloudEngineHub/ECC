@@ -154,11 +154,12 @@ history or native plugin caches. Older pre-manifest installs are cleaned
 conservatively and unverifiable files are retained with warnings.
 
 After install, `codex plugin list` is only a registration check. From an ECC
-checkout, run the cache check to verify that the installed manifest can resolve
-its referenced skills, MCP config, and assets:
+checkout, set `ECC_PLUGIN_CACHE` to the active root identified above, then run
+the cache check to verify that the installed manifest can resolve its referenced
+skills, MCP config, and assets:
 
 ```bash
-node scripts/codex/check-plugin-cache.js
+node scripts/codex/check-plugin-cache.js --plugin-dir "$ECC_PLUGIN_CACHE"
 ```
 
 The installed plugin registers under the short slug `ecc` so tool and command names
