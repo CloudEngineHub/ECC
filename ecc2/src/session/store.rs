@@ -2023,6 +2023,16 @@ impl StateStore {
             {
                 continue;
             }
+            // The shared Claude tool-activity feed can contain sessions that
+            // were never registered with ECC2 (for example, an existing
+            // standalone Claude Code session). tool_log.session_id has a
+            // foreign key to sessions(id), so ignore those external records
+            // without making the entire sessions/status command fail.
+            // Do this before deduplication: an unknown session must not
+            // reserve an event id for an ECC2-owned session.
+            if !session_tasks.contains_key(&row.session_id) {
+                continue;
+            }
             if !seen_event_ids.insert(row.id.clone()) {
                 continue;
             }
@@ -6117,6 +6127,53 @@ mod tests {
         );
         assert_eq!(logs.entries[1].trigger_summary, "sync tools");
 
+        Ok(())
+    }
+
+    #[test]
+    fn sync_tool_activity_metrics_skips_sessions_not_registered_with_ecc2() -> Result<()> {
+        let tempdir = TestDir::new("store-unregistered-tool-activity")?;
+        let db = StateStore::open(&tempdir.path().join("state.db"))?;
+        let now = Utc::now();
+        db.insert_session(&Session {
+            id: "ecc-owned".to_string(),
+            task: "registered task".to_string(),
+            project: "workspace".to_string(),
+            task_group: "general".to_string(),
+            agent_type: "claude".to_string(),
+            working_dir: PathBuf::from("/tmp"),
+            state: SessionState::Running,
+            pid: None,
+            worktree: None,
+            created_at: now,
+            updated_at: now,
+            last_heartbeat_at: now,
+            metrics: SessionMetrics::default(),
+        })?;
+
+        let metrics_path = tempdir.path().join("tool-activity.jsonl");
+        fs::write(
+            &metrics_path,
+            concat!(
+                "{\"id\":\"external-1\",\"session_id\":\"standalone-claude\",\"tool_name\":\"Write\",\"file_paths\":[\"outside.txt\"]}\n",
+                "{\"id\":\"owned-1\",\"session_id\":\"ecc-owned\",\"tool_name\":\"Read\",\"file_paths\":[\"inside.txt\"]}\n"
+            ),
+        )?;
+
+        // Previously, the first row violated tool_log.session_id's FK and
+        // prevented sessions/status from reading any valid ECC2 sessions.
+        db.sync_tool_activity_metrics(&metrics_path)?;
+        db.sync_tool_activity_metrics(&metrics_path)?;
+        let known = db.get_session("ecc-owned")?.expect("registered session");
+        assert_eq!(known.metrics.tool_calls, 1);
+        assert_eq!(known.metrics.files_changed, 1);
+        let logs = db.query_tool_logs("ecc-owned", 1, 10)?;
+        assert_eq!(logs.total, 1);
+        assert_eq!(logs.entries[0].tool_name, "Read");
+        let total_logs = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM tool_log", [], |r| r.get::<_, i64>(0))?;
+        assert_eq!(total_logs, 1);
         Ok(())
     }
 
