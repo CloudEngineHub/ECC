@@ -64,8 +64,9 @@ const MARKDOWN_LINK_TARGET = /(\]\()([^)\s]+)(\))/g;
 
 // Rewrite relative links that resolve inside the installed rule set to their
 // `.instructions.md` names. Everything else — links escaping `rules/`,
-// absolute or external targets, anchors, and `README.md` (not installed) —
-// is left unchanged.
+// absolute or external targets, anchors, `README.md` (not installed), and
+// anything inside fenced code blocks (examples must stay verbatim) — is left
+// unchanged.
 function rewriteRuleLinks(body, label) {
   const normalizedLabel = String(label || '').replace(/\\/g, '/');
   if (!/\.md$/i.test(normalizedLabel)) {
@@ -73,28 +74,38 @@ function rewriteRuleLinks(body, label) {
   }
   const sourceDir = path.posix.dirname(normalizedLabel);
 
-  return body.replace(MARKDOWN_LINK_TARGET, (link, open, target, close) => {
-    const anchorIndex = target.indexOf('#');
-    const targetPath = anchorIndex === -1 ? target : target.slice(0, anchorIndex);
-    const anchor = anchorIndex === -1 ? '' : target.slice(anchorIndex);
+  let inFence = false;
+  return body.split('\n').map(line => {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      return line;
+    }
+    if (inFence) {
+      return line;
+    }
+    return line.replace(MARKDOWN_LINK_TARGET, (link, open, target, close) => {
+      const anchorIndex = target.indexOf('#');
+      const targetPath = anchorIndex === -1 ? target : target.slice(0, anchorIndex);
+      const anchor = anchorIndex === -1 ? '' : target.slice(anchorIndex);
 
-    if (!/\.md$/i.test(targetPath)) {
-      return link;
-    }
-    if (/^[a-z][a-z0-9+.-]*:/i.test(targetPath) || targetPath.startsWith('/')) {
-      return link;
-    }
-    if (/^readme\.md$/i.test(path.posix.basename(targetPath))) {
-      return link;
-    }
+      if (!/\.md$/i.test(targetPath)) {
+        return link;
+      }
+      if (/^[a-z][a-z0-9+.-]*:/i.test(targetPath) || targetPath.startsWith('/')) {
+        return link;
+      }
+      if (/^readme\.md$/i.test(path.posix.basename(targetPath))) {
+        return link;
+      }
 
-    const resolved = path.posix.normalize(path.posix.join(sourceDir, targetPath));
-    if (!resolved.startsWith('rules/')) {
-      return link;
-    }
+      const resolved = path.posix.normalize(path.posix.join(sourceDir, targetPath));
+      if (!resolved.startsWith('rules/')) {
+        return link;
+      }
 
-    return `${open}${targetPath.replace(/\.md$/i, '.instructions.md')}${anchor}${close}`;
-  });
+      return `${open}${targetPath.replace(/\.md$/i, '.instructions.md')}${anchor}${close}`;
+    });
+  }).join('\n');
 }
 
 function adaptCopilotRule(source, label = '<unknown>') {

@@ -216,6 +216,14 @@ test('rule transform leaves links outside the installed rule set unchanged', () 
   assert.ok(adapted.includes('(/rules/x.md)'));
 });
 
+test('rule transform keeps fenced code examples unchanged', () => {
+  const source = '---\npaths:\n  - "**/*.ts"\n---\nOutside [link](../common/hooks.md).\n\n```md\n[example](../common/coding-style.md)\n```\n~~~\n[tildes](../common/patterns.md)\n~~~\n';
+  const adapted = adaptCopilotRule(source, 'rules/angular/coding-style.md');
+  assert.ok(adapted.includes('](../common/hooks.instructions.md)'));
+  assert.ok(adapted.includes('```md\n[example](../common/coding-style.md)\n```'));
+  assert.ok(adapted.includes('~~~\n[tildes](../common/patterns.md)\n~~~'));
+});
+
 test('rules are planned into .github/instructions/ecc as renamed instructions files', () => {
   const operations = planForRepo([{ id: 'rules-core', paths: ['rules'] }]);
   assert.ok(operations.length > 100);
