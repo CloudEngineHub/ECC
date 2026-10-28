@@ -176,8 +176,44 @@ test('rule transform rejects frontmatter that is not an object', () => {
 test('rule transform rejects a non-list paths value', () => {
   assert.throws(
     () => adaptCopilotRule('---\npaths: not-a-list\n---\nbody\n', 'rules/broken.md'),
-    /"paths" must be a list of glob strings/
+    /"paths" must be a non-empty list of glob strings/
   );
+});
+
+test('rule transform rejects an empty paths list', () => {
+  assert.throws(
+    () => adaptCopilotRule('---\npaths: []\n---\nbody\n', 'rules/broken.md'),
+    /"paths" must be a non-empty list of glob strings/
+  );
+});
+
+test('rule transform treats an immediately empty frontmatter block as global', () => {
+  const adapted = adaptCopilotRule('---\n---\n# Rule\n', 'rules/common/x.md');
+  assert.match(adapted, /^---\napplyTo: ["']\*\*["']\n---\n# Rule\n/);
+  assert.strictEqual(adapted.match(/^---$/gm).length, 2, 'must not leave stray delimiters in the body');
+});
+
+test('rule transform treats a whitespace-only frontmatter block as global', () => {
+  const adapted = adaptCopilotRule('---\n\n---\n# Rule\n', 'rules/common/x.md');
+  assert.match(adapted, /^---\napplyTo: ["']\*\*["']\n---\n# Rule\n/);
+  assert.strictEqual(adapted.match(/^---$/gm).length, 2, 'must not leave stray delimiters in the body');
+});
+
+test('rule transform rewrites links to installed rule files', () => {
+  const source = '---\npaths:\n  - "**/*.ts"\n---\nSee [common](../common/coding-style.md) and [anchor](../common/hooks.md#hooks).\n';
+  const adapted = adaptCopilotRule(source, 'rules/angular/coding-style.md');
+  assert.ok(adapted.includes('](../common/coding-style.instructions.md)'));
+  assert.ok(adapted.includes('](../common/hooks.instructions.md#hooks)'));
+});
+
+test('rule transform leaves links outside the installed rule set unchanged', () => {
+  const source = '---\npaths:\n  - "**/*.ts"\n---\n[docs](../../docs/guide.md) [readme](../README.md) [web](https://example.org/x.md) [self](#section) [abs](/rules/x.md)\n';
+  const adapted = adaptCopilotRule(source, 'rules/angular/coding-style.md');
+  assert.ok(adapted.includes('](../../docs/guide.md)'));
+  assert.ok(adapted.includes('](../README.md)'));
+  assert.ok(adapted.includes('(https://example.org/x.md)'));
+  assert.ok(adapted.includes('(#section)'));
+  assert.ok(adapted.includes('(/rules/x.md)'));
 });
 
 test('rules are planned into .github/instructions/ecc as renamed instructions files', () => {
@@ -416,6 +452,8 @@ test('Copilot installs rules as instructions and uninstall removes them', () => 
     const angular = fs.readFileSync(path.join(instructionsRoot, 'angular', 'coding-style.instructions.md'), 'utf8');
     assert.match(angular, /^---\napplyTo: ["']\*\*\/\*\.component\.ts/);
     assert.doesNotMatch(angular, /^paths:/m);
+    assert.ok(angular.includes('](../common/coding-style.instructions.md)'));
+    assert.ok(!angular.includes('](../common/coding-style.md)'));
     const security = fs.readFileSync(path.join(instructionsRoot, 'common', 'security.instructions.md'), 'utf8');
     assert.match(security, /^---\napplyTo: ["']\*\*["']\n---\n/);
     assert.ok(!fs.existsSync(path.join(instructionsRoot, 'README.instructions.md')));

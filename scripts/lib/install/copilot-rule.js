@@ -8,15 +8,35 @@
 // other: `paths:` becomes `applyTo:`, and a rule without `paths` becomes
 // `applyTo: "**"` so it keeps applying globally.
 //
+// Relative Markdown links between rules are renamed to their installed
+// `.instructions.md` names; links that leave the rule set (docs, README,
+// external URLs) are kept as-is.
+//
 // The transform is an allowlist: only `paths` is read, so frontmatter keys
 // added to ECC rules later cannot silently leak into the Copilot copy.
+
+const path = require('path');
 
 const GLOBAL_APPLY_TO = '**';
 
 function splitFrontmatter(source, label) {
-  const match = String(source || '').match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+  const text = String(source || '');
+
+  // An immediately empty block (`---\n---\n`) never reaches the YAML loader:
+  // the delimiters are stripped and the rule is treated as global.
+  const emptyBlock = text.match(/^---\r?\n---\r?\n/);
+  if (emptyBlock) {
+    return { frontmatter: {}, body: text.slice(emptyBlock[0].length) };
+  }
+
+  const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
   if (!match) {
     return null;
+  }
+
+  // A whitespace-only block is empty metadata, not a YAML document.
+  if (match[1].trim() === '') {
+    return { frontmatter: {}, body: text.slice(match[0].length) };
   }
 
   // Keep YAML loading behind the transform boundary. Public help commands load
@@ -29,7 +49,7 @@ function splitFrontmatter(source, label) {
 
   return {
     frontmatter,
-    body: String(source).slice(match[0].length),
+    body: text.slice(match[0].length),
   };
 }
 
@@ -39,22 +59,61 @@ function serializeApplyTo(globs) {
     .trimEnd();
 }
 
+// Markdown links with a compact target (no title), e.g. [text](../a/b.md#x).
+const MARKDOWN_LINK_TARGET = /(\]\()([^)\s]+)(\))/g;
+
+// Rewrite relative links that resolve inside the installed rule set to their
+// `.instructions.md` names. Everything else — links escaping `rules/`,
+// absolute or external targets, anchors, and `README.md` (not installed) —
+// is left unchanged.
+function rewriteRuleLinks(body, label) {
+  const normalizedLabel = String(label || '').replace(/\\/g, '/');
+  if (!/\.md$/i.test(normalizedLabel)) {
+    return body;
+  }
+  const sourceDir = path.posix.dirname(normalizedLabel);
+
+  return body.replace(MARKDOWN_LINK_TARGET, (link, open, target, close) => {
+    const anchorIndex = target.indexOf('#');
+    const targetPath = anchorIndex === -1 ? target : target.slice(0, anchorIndex);
+    const anchor = anchorIndex === -1 ? '' : target.slice(anchorIndex);
+
+    if (!/\.md$/i.test(targetPath)) {
+      return link;
+    }
+    if (/^[a-z][a-z0-9+.-]*:/i.test(targetPath) || targetPath.startsWith('/')) {
+      return link;
+    }
+    if (/^readme\.md$/i.test(path.posix.basename(targetPath))) {
+      return link;
+    }
+
+    const resolved = path.posix.normalize(path.posix.join(sourceDir, targetPath));
+    if (!resolved.startsWith('rules/')) {
+      return link;
+    }
+
+    return `${open}${targetPath.replace(/\.md$/i, '.instructions.md')}${anchor}${close}`;
+  });
+}
+
 function adaptCopilotRule(source, label = '<unknown>') {
   const parsed = splitFrontmatter(source, label);
 
   if (!parsed) {
-    return `---\napplyTo: "${GLOBAL_APPLY_TO}"\n---\n${String(source || '')}`;
+    return `---\napplyTo: "${GLOBAL_APPLY_TO}"\n---\n${rewriteRuleLinks(String(source || ''), label)}`;
   }
 
-  const { frontmatter, body } = parsed;
+  const { frontmatter } = parsed;
+  const body = rewriteRuleLinks(parsed.body, label);
   const paths = frontmatter.paths;
 
   if (paths === undefined) {
     return `---\napplyTo: "${GLOBAL_APPLY_TO}"\n---\n${body}`;
   }
 
-  if (!Array.isArray(paths) || paths.some(glob => typeof glob !== 'string' || glob.trim() === '')) {
-    throw new Error(`Cannot adapt Copilot rule ${label}: "paths" must be a list of glob strings`);
+  if (!Array.isArray(paths) || paths.length === 0 || paths.some(glob => typeof glob !== 'string' || glob.trim() === '')) {
+    throw new Error(`Cannot adapt Copilot rule ${label}: "paths" must be a non-empty list of glob strings`);
   }
 
   return `---\n${serializeApplyTo(paths.map(glob => glob.trim()).join(','))}\n---\n${body}`;
