@@ -355,12 +355,17 @@ function runTests() {
     state.operations.find(operation => operation.destinationPath === stubPath).contentSha256 = sha256(oldStub);
     writeInstallState(value.legacyStatePath, state);
     const originalRename = fileSystem.renameSync;
+    let renameAttempted = false;
     fileSystem.renameSync = (from, ...args) => {
-      if (from === stubPath) throw Object.assign(new Error('Synthetic removal denial'), { code: 'EACCES' });
+      if (from === stubPath) {
+        renameAttempted = true;
+        throw Object.assign(new Error('Synthetic removal denial'), { code: 'EACCES' });
+      }
       return originalRename(from, ...args);
     };
     try {
       const result = repair(value, buildInertPayload);
+      assert.ok(renameAttempted, 'The stub removal was attempted');
       assert.strictEqual(result.results[0].status, 'error', JSON.stringify(result));
       assert.strictEqual(fs.readFileSync(stubPath, 'utf8'), oldStub);
     } finally { fileSystem.renameSync = originalRename; }
