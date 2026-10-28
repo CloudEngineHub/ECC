@@ -47,13 +47,20 @@ function withTempHome(homeDir) {
   };
 }
 
+// session-activity-tracker.js appends to ~/.claude/metrics/tool-usage.jsonl, so
+// runs get an empty home instead of the developer's real one unless a test
+// passes withTempHome().
+const ISOLATED_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'session-activity-home-'));
+const ISOLATED_HOME_ENV = { HOME: ISOLATED_HOME, USERPROFILE: ISOLATED_HOME };
+process.on('exit', () => fs.rmSync(ISOLATED_HOME, { recursive: true, force: true }));
+
 function runScript(input, envOverrides = {}, options = {}) {
   const inputStr = typeof input === 'string' ? input : JSON.stringify(input);
   const result = spawnSync('node', [script], {
     encoding: 'utf8',
     input: inputStr,
     timeout: 10000,
-    env: { ...process.env, ...envOverrides },
+    env: { ...process.env, ...ISOLATED_HOME_ENV, ...envOverrides },
     cwd: options.cwd,
   });
   return { code: result.status || 0, stdout: result.stdout || '', stderr: result.stderr || '' };
