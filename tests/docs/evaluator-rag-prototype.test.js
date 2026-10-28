@@ -461,7 +461,8 @@ test('connector report records unscored fixture coverage and verifier rollback',
     'scenario.json#/inputs/unavailable_channels',
     'trace.json#/events',
     'candidate-playbook.md#worked-comparison',
-    'scenario.json#/inputs/management_preparation'
+    'scenario.json#/inputs/management_preparation',
+    'scenario.json#/inputs/target_contract'
   ]);
   assert.ok(report.evidence_coverage.gaps.includes('Event retention and deployed settings are unknown.'));
   assert.strictEqual(report.recommended_next_action.candidate_id, verifier.promoted_candidate_id);
@@ -492,6 +493,31 @@ test('connector preparation scopes unavailable SSH to dependent host checks', ()
     'existing management access requires redundant installation',
     'successful management reads prove collection or notification readiness'
   ]);
+});
+
+test('target contract dependencies are reassessed only after explicit scope revision', () => {
+  const scenario = readFixtureJson('connector-diagnostics-gap/scenario.json');
+  const verifier = readFixtureJson('connector-diagnostics-gap/verifier-result.json');
+  const trace = readFixtureJson('connector-diagnostics-gap/trace.json');
+  const report = readFixtureJson('connector-diagnostics-gap/report.json');
+  const playbook = read('examples/evaluator-rag-prototype/connector-diagnostics-gap/candidate-playbook.md');
+  const input = scenario.inputs.target_contract;
+  assert.strictEqual(input.target_sample, 'unread');
+  assert.strictEqual(input.mandatory_fields, 'unconfirmed');
+  assert.strictEqual(input.development_authorized, true);
+  assert.deepStrictEqual(input.documented_variants, ['separate payment document', 'document payment section']);
+  const result = verifier.target_contract;
+  assert.strictEqual(result.before_stop.document_filling, 'hold_for_target_mapping');
+  assert.strictEqual(result.after_stop.candidate_state, 'unfinished_not_promoted');
+  assert.strictEqual(result.after_stop.action, 'stop_requested_work');
+  assert.strictEqual(result.after_scope_revision.authorization_source, 'explicit_user_scope_revision');
+  assert.deepStrictEqual(result.after_scope_revision.continue_work, ['fact storage', 'fact validation']);
+  assert.strictEqual(result.after_scope_revision.document_filling, 'separate_phase_awaiting_target_contract');
+  assert.strictEqual(result.after_scope_revision.erases_earlier_sequencing_error, false);
+  assert.ok(trace.events.some(event => event.variant === 'target_contract'));
+  assert.ok(report.evidence_coverage.sources.includes('scenario.json#/inputs/target_contract'));
+  assert.ok(playbook.includes('General development authorization does not confirm the active target contract'));
+  assert.ok(playbook.includes('An explicit stop halts the requested work'));
 });
 
 if (failed > 0) {

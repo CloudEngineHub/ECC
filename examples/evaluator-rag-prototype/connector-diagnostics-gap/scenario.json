@@ -19,6 +19,16 @@
       "kind": "public_feedback",
       "url": "https://github.com/affaan-m/ECC/issues/3680#issuecomment-6436640503",
       "purpose": "Reported management-transport versus collection example; synthetic variant, not historical reproduction"
+    },
+    {
+      "kind": "public_feedback",
+      "url": "https://github.com/affaan-m/ECC/issues/3680#issuecomment-6455507941",
+      "purpose": "Reported premature target-dependent work and explicit stop; synthetic control only"
+    },
+    {
+      "kind": "public_feedback",
+      "url": "https://github.com/affaan-m/ECC/issues/3680#issuecomment-6456519404",
+      "purpose": "Later explicit scope revision separates fact storage from document filling; synthetic continuation only"
     }
   ],
   "evidence_limits": "The reported connector configuration, original request, ECC activation/version and causal contribution are unverified. All connector capabilities below are synthetic evaluation inputs.",
@@ -55,6 +65,24 @@
         "prepare monitoring templates",
         "map existing management capabilities",
         "inspect the existing notification channel"
+      ]
+    },
+    "target_contract": {
+      "development_authorized": true,
+      "documented_variants": [
+        "separate payment document",
+        "document payment section"
+      ],
+      "target_sample": "unread",
+      "mandatory_fields": "unconfirmed",
+      "independent_work": [
+        "fact storage",
+        "fact validation"
+      ],
+      "scope_sequence": [
+        "development authorized",
+        "explicit stop",
+        "explicit scope revision authorizes fact storage and validation; document filling remains separate"
       ]
     }
   },

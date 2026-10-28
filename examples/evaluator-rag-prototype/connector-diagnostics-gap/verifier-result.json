@@ -50,5 +50,24 @@
       "existing management access requires redundant installation",
       "successful management reads prove collection or notification readiness"
     ]
+  },
+  "target_contract": {
+    "before_stop": {
+      "document_filling": "hold_for_target_mapping",
+      "reason": "General documentation does not identify the active variant and mandatory fields; preserve independent findings."
+    },
+    "after_stop": {
+      "action": "stop_requested_work",
+      "candidate_state": "unfinished_not_promoted"
+    },
+    "after_scope_revision": {
+      "authorization_source": "explicit_user_scope_revision",
+      "continue_work": [
+        "fact storage",
+        "fact validation"
+      ],
+      "document_filling": "separate_phase_awaiting_target_contract",
+      "erases_earlier_sequencing_error": false
+    }
   }
 }

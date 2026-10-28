@@ -52,6 +52,25 @@ Management access establishes neither continuous collection readiness nor
 notification delivery or authority for arbitrary changes. These are expected
 fixture decisions, not live checks or a runtime correction of the reported plan.
 
+## Target Contract Variant
+
+The [target-contract report](https://github.com/affaan-m/ECC/issues/3680#issuecomment-6455507941)
+and its [scope-revision follow-up](https://github.com/affaan-m/ECC/issues/3680#issuecomment-6456519404)
+contribute a second synthetic dependency control. Two import variants are
+documented, but the required target sample is unread and mandatory fields are
+unconfirmed. General development authorization does not confirm the active target contract.
+Before dependent document filling, obtain a supported variant/field mapping or
+state the precise dependency hold; preserve independent preparation findings.
+
+An explicit stop halts the requested work and leaves its candidate unfinished,
+without promoting it to accepted state. In a later phase, an explicit user scope
+revision separately authorizes fact storage and validation. Continue that
+independent work; keep future document filling dependent on its target contract.
+Do not let the unconfirmed document contract block the newly authorized scope,
+or treat later code acceptance as erasing the earlier sequencing mistake.
+These are expected fixture decisions, not execution of the reported application,
+a new approval ritual, or evidence of a deployed prevention fix.
+
 ## Repository Validation
 
 Run `node tests/docs/evaluator-rag-prototype.test.js`, Markdown lint on touched
