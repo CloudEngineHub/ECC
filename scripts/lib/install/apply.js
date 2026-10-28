@@ -448,7 +448,9 @@ function openCodeActivationCandidates(plan, previousOperations) {
 
 function activationIsInactive(kind, operation, content) {
   if (kind === 'plugin') {
-    return content.toString('utf8') === getDisabledOpenCodePluginContent();
+    const stub = content.toString('utf8');
+    // Installs made before the V2 stub fix hold the inert factory stub; it is just as inactive.
+    return stub === getDisabledOpenCodePluginContent() || stub === 'export default async () => ({});\n';
   }
   const text = content.toString('utf8');
   const relativePath = operation.sourceRelativePath || operation.destinationPath;

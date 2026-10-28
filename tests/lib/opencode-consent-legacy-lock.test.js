@@ -333,6 +333,19 @@ function runTests() {
       assertBothLocksReleased(value);
     });
   }
+  test('a legacy root holding the pre-fix declined factory stub still migrates', value => {
+    const state = addLegacyActivations(value, 'declined');
+    const oldStub = 'export default async () => ({});\n';
+    const stubPath = path.join(value.legacyRoot, 'plugins/ecc-hooks.ts');
+    fs.writeFileSync(stubPath, oldStub);
+    state.operations.find(operation => operation.destinationPath === stubPath).contentSha256 = sha256(oldStub);
+    writeInstallState(value.legacyStatePath, state);
+    const result = repair(value, buildInertPayload);
+    // The inert legacy file may be retained (its source digest differs); migration must not error.
+    assert.strictEqual(result.results[0].status, 'repaired', JSON.stringify(result));
+    assert.strictEqual(fs.readFileSync(path.join(value.canonicalRoot, 'plugins/ecc-hooks.ts'), 'utf8'),
+      getDisabledOpenCodePluginContent());
+  });
   for (const defect of ['modified', 'missing-digest', 'source-mismatch', 'source-missing', 'symlink', 'unrecorded-alias', 'merge-json']) {
     test(`legacy ${defect} activation refuses before build and preserves ownership`, value => {
       const state = addLegacyActivations(value);
