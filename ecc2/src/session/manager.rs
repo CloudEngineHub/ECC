@@ -3128,6 +3128,9 @@ fn build_agent_command(
                     command.arg("--append-system-prompt").arg(prompt);
                 }
             }
+            // Claude's variadic options (such as --add-dir) must not consume
+            // the task, including when the task itself begins with a dash.
+            command.arg("--");
         }
         HarnessKind::Codex => {
             command
@@ -4304,6 +4307,71 @@ mod tests {
     }
 
     #[test]
+    fn build_agent_command_delimits_claude_prompt() {
+        let cfg = Config::default();
+        let cases = [
+            (None, vec![]),
+            (Some(SessionAgentProfile::default()), vec![]),
+            (
+                Some(SessionAgentProfile {
+                    add_dirs: vec![PathBuf::from("docs")],
+                    ..Default::default()
+                }),
+                vec!["--add-dir", "docs"],
+            ),
+            (
+                Some(SessionAgentProfile {
+                    add_dirs: vec![PathBuf::from("docs"), PathBuf::from("shared specs")],
+                    ..Default::default()
+                }),
+                vec!["--add-dir", "docs", "--add-dir", "shared specs"],
+            ),
+            (
+                Some(SessionAgentProfile {
+                    allowed_tools: vec!["Read".to_string(), "Edit".to_string()],
+                    ..Default::default()
+                }),
+                vec!["--allowed-tools", "Read,Edit"],
+            ),
+            (
+                Some(SessionAgentProfile {
+                    disallowed_tools: vec!["Bash".to_string()],
+                    ..Default::default()
+                }),
+                vec!["--disallowed-tools", "Bash"],
+            ),
+        ];
+
+        for (profile, flags) in cases {
+            for agent in ["claude", "claude-code"] {
+                for task in ["review this change", "--help"] {
+                    let command = build_agent_command(
+                        &cfg,
+                        agent,
+                        Path::new("claude"),
+                        task,
+                        "sess-1234",
+                        Path::new("/tmp/repo"),
+                        profile.as_ref(),
+                    );
+                    let args = command
+                        .as_std()
+                        .get_args()
+                        .map(|value| value.to_string_lossy().to_string())
+                        .collect::<Vec<_>>();
+                    let expected = ["--print", "--name", "ecc-sess-1234"]
+                        .into_iter()
+                        .chain(flags.iter().copied())
+                        .chain(["--", task])
+                        .collect::<Vec<_>>();
+
+                    assert_eq!(args, expected, "agent={agent}, profile={profile:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn build_agent_command_applies_profile_runner_flags_for_claude() {
         let cfg = Config::default();
         let profile = SessionAgentProfile {
@@ -4356,6 +4424,7 @@ mod tests {
                 "1.25",
                 "--append-system-prompt",
                 "Review thoroughly.",
+                "--",
                 "review this change",
             ]
         );
