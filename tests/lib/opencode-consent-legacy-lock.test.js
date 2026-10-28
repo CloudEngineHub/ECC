@@ -341,8 +341,9 @@ function runTests() {
     state.operations.find(operation => operation.destinationPath === stubPath).contentSha256 = sha256(oldStub);
     writeInstallState(value.legacyStatePath, state);
     const result = repair(value, buildInertPayload);
-    // The inert legacy file may be retained (its source digest differs); migration must not error.
+    // The inert legacy file must be gone: OpenCode scans plugin paths independently.
     assert.strictEqual(result.results[0].status, 'repaired', JSON.stringify(result));
+    assert.strictEqual(fs.existsSync(stubPath), false);
     assert.strictEqual(fs.readFileSync(path.join(value.canonicalRoot, 'plugins/ecc-hooks.ts'), 'utf8'),
       getDisabledOpenCodePluginContent());
   });

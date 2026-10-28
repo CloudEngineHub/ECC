@@ -13,6 +13,7 @@ const {
   assertHookConsentReady,
   parseJsoncConfig,
   getDisabledOpenCodePluginContent,
+  isInertOpenCodePluginStub,
   getRecordedHookConsent,
   getOpenCodeActivationPathKind,
   getOpenCodeSourceActivationKind,
@@ -448,9 +449,7 @@ function openCodeActivationCandidates(plan, previousOperations) {
 
 function activationIsInactive(kind, operation, content) {
   if (kind === 'plugin') {
-    const stub = content.toString('utf8');
-    // Installs made before the V2 stub fix hold the inert factory stub; it is just as inactive.
-    return stub === getDisabledOpenCodePluginContent() || stub === 'export default async () => ({});\n';
+    return isInertOpenCodePluginStub(content);
   }
   const text = content.toString('utf8');
   const relativePath = operation.sourceRelativePath || operation.destinationPath;

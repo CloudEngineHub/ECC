@@ -191,6 +191,15 @@ function getDisabledOpenCodePluginContent() {
   return 'export default { id: "ecc-hooks", setup() {} };\n';
 }
 
+// Installs made before the V2 stub fix wrote this stub. It is inert either way;
+// the V2 loader merely rejects it.
+const LEGACY_DISABLED_OPENCODE_PLUGIN_CONTENT = 'export default async () => ({});\n';
+
+function isInertOpenCodePluginStub(content) {
+  const text = content.toString('utf8');
+  return text === getDisabledOpenCodePluginContent() || text === LEGACY_DISABLED_OPENCODE_PLUGIN_CONTENT;
+}
+
 function isOpenCodeHookActivationOperation(operation = {}) {
   return getOpenCodeSourceActivationKind(operation) !== null;
 }
@@ -428,6 +437,7 @@ module.exports = {
   disableOpenCodeHookPluginRegistration,
   parseJsoncConfig,
   getDisabledOpenCodePluginContent,
+  isInertOpenCodePluginStub,
   getOpenCodeActivationPathKind,
   getOpenCodeSourceActivationKind,
   formatHookCapabilityDisclosure,
