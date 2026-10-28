@@ -4974,6 +4974,11 @@ fn is_assignment_handoff(content: &str, sender: &str) -> bool {
         return false;
     }
 
+    // Template steps are already queued with their own runner; their handoff
+    // is lineage/notification, never a second intake request.
+    if context.contains(" | template ") {
+        return true;
+    }
     [
         "reused idle delegate",
         "spawned new delegate",
@@ -7058,9 +7063,15 @@ mod tests {
             priority: comms::TaskPriority::Normal,
         })?;
         db.send_message("lead", "worker", &native_delegate, "task_handoff")?;
-        assert_eq!(db.unread_task_handoff_count("worker")?, 2);
+        let template_notice = serde_json::to_string(&comms::MessageType::TaskHandoff {
+            task: "Run template step".to_string(),
+            context: "Assigned by lead [claude] | cwd /repo | template release | build".to_string(),
+            priority: comms::TaskPriority::Normal,
+        })?;
+        db.send_message("lead", "worker", &template_notice, "task_handoff")?;
+        assert_eq!(db.unread_task_handoff_count("worker")?, 3);
         assert!(db.unread_task_handoff_targets(10)?.is_empty());
-        assert_eq!(db.unread_task_handoffs_for_rebalance("worker", 10)?.len(), 2);
+        assert_eq!(db.unread_task_handoffs_for_rebalance("worker", 10)?.len(), 3);
         assert!(db
             .unread_task_handoffs_for_session("worker", 10)?
             .is_empty());
@@ -7079,7 +7090,7 @@ mod tests {
             priority: comms::TaskPriority::Normal,
         })?;
         db.send_message(long_sender, "worker", &long_notice, "task_handoff")?;
-        assert_eq!(db.unread_task_handoff_count("worker")?, 3);
+        assert_eq!(db.unread_task_handoff_count("worker")?, 4);
         assert!(db.unread_task_handoff_targets(10)?.is_empty());
 
         // Even a matching routing phrase in a user message is not an internal
@@ -7092,14 +7103,14 @@ mod tests {
             r#"{"task":"Explain spawned new delegate","context":"Explicit task"}"#,
             "task_handoff",
         )?;
-        assert_eq!(db.unread_task_handoff_count("worker")?, 6);
+        assert_eq!(db.unread_task_handoff_count("worker")?, 7);
         assert_eq!(db.unread_task_handoff_targets(10)?, vec![("worker".to_string(), 3)]);
         assert_eq!(db.unread_task_handoffs_for_session("worker", 10)?.len(), 3);
 
         // The original notification remains available to the human/agent inbox,
         // even though it never spawns a recursive grandchild.
         let all = db.list_messages_for_session("worker", 10)?;
-        assert_eq!(all.iter().filter(|message| message.msg_type == "task_handoff").count(), 6);
+        assert_eq!(all.iter().filter(|message| message.msg_type == "task_handoff").count(), 7);
         Ok(())
     }
 

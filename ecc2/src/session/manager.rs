@@ -1091,7 +1091,10 @@ pub async fn rebalance_team_backlog(
         }
 
         let message_budget = limit.saturating_sub(outcomes.len());
-        let messages = db.unread_task_handoffs_for_rebalance(&delegate.id, message_budget)?;
+        // Only unassigned intake work may move. Native assignment notices
+        // already belong to the running/queued delegate and must never be
+        // replayed onto another worker by the load balancer.
+        let messages = db.unread_task_handoffs_for_session(&delegate.id, message_budget)?;
 
         for message in messages {
             if outcomes.len() >= limit {
