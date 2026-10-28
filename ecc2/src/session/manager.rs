@@ -7662,6 +7662,51 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn template_launch_notice_is_not_a_second_dispatch_request() -> Result<()> {
+        let tempdir = TestDir::new("manager-template-no-recursion")?;
+        let repo_root = tempdir.path().join("repo");
+        init_git_repo(&repo_root)?;
+        let mut cfg = build_config(tempdir.path());
+        cfg.auto_create_worktrees = false;
+        cfg.orchestration_templates.insert(
+            "two-step".to_string(),
+            crate::config::OrchestrationTemplateConfig {
+                steps: vec![
+                    crate::config::OrchestrationTemplateStepConfig {
+                        name: Some("first".to_string()),
+                        task: "First task".to_string(),
+                        worktree: Some(false),
+                        ..Default::default()
+                    },
+                    crate::config::OrchestrationTemplateStepConfig {
+                        name: Some("second".to_string()),
+                        task: "Second task".to_string(),
+                        worktree: Some(false),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+        );
+        let db = StateStore::open(&cfg.db_path)?;
+        let original_dir = std::env::current_dir()?;
+        std::env::set_current_dir(&repo_root)?;
+        let launch = launch_orchestration_template(
+            &db, &cfg, "two-step", None, None, BTreeMap::new(),
+        ).await;
+        std::env::set_current_dir(original_dir)?;
+        let launch = launch?;
+        assert_eq!(launch.created.len(), 2);
+        let second_id = &launch.created[1].session_id;
+        assert_eq!(db.unread_task_handoff_count(second_id)?, 1);
+        assert!(db.unread_task_handoff_targets(10)?.is_empty());
+        let tick = auto_dispatch_backlog(&db, &cfg, "claude", false, 10).await?;
+        assert!(tick.is_empty());
+        assert!(db.delegated_children(second_id, 10)?.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn auto_dispatch_does_not_recursively_route_assigned_handoffs() -> Result<()> {
         let tempdir = TestDir::new("manager-auto-dispatch-no-recursion")?;
         let repo_root = tempdir.path().join("repo");
