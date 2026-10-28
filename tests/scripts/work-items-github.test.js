@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { createStateStore } = require('../../scripts/lib/state-store');
 const { syncGithubWorkItems } = require('../../scripts/work-items');
+const { claimWorkItem } = require('../../scripts/lib/control-pane/work-item-mutations');
 
 let passed = 0;
 let failed = 0;
@@ -44,6 +45,28 @@ async function test(name, fn) {
 }
 
 async function run() {
+  for (const type of ['pr', 'issue']) {
+    await test(`${type}: a claimed import stays out of the pickup queue after reimport`, ({ store, source, sync }) => {
+      source[type][0].author = null;
+      source[type === 'pr' ? 'issue' : 'pr'] = [];
+      const id = sync().items[0].id;
+      const claimed = claimWorkItem(store, { id, owner: 'worker', assigneeKind: 'agent', sessionId: 'session-1' });
+      assert.strictEqual(claimed.claimed, true);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        sync();
+        const item = store.getWorkItemById(id);
+        assert.strictEqual(item.status, 'running');
+        assert.strictEqual(item.owner, 'worker');
+        assert.strictEqual(item.sessionId, 'session-1');
+        assert.strictEqual(item.metadata.assigneeKind, 'agent');
+        assert.strictEqual(store.listWorkItems().totalCount, 1);
+        assert.deepStrictEqual(claimWorkItem(store, { owner: 'second-worker' }), {
+          claimed: false, reason: 'no-unassigned-open-items'
+        });
+      }
+    });
+  }
+
   for (const type of ['pr', 'issue']) {
     for (const status of ['running', 'claimed', 'blocked', 'hold', 'done', 'closed']) {
       await test(`${type}: refresh preserves locally managed ${status} work`, ({ store, source, sync, dir }) => {
@@ -176,7 +199,7 @@ async function run() {
     assert.strictEqual(store.getWorkItemById(id).status, 'needs-review');
   });
 
-  console.log(`Results: ${passed} passed, ${failed} failed`);
+  console.log(`Results: Passed: ${passed}, Failed: ${failed}`);
   if (failed) process.exitCode = 1;
 }
 
