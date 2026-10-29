@@ -8,6 +8,8 @@
  */
 
 const DONE_STATUSES = new Set(['done', 'closed', 'resolved', 'merged', 'cancelled']);
+// Only explicitly admitted work may be newly claimed.
+const CLAIMABLE_STATUSES = new Set(['open', 'ready']);
 const PRIORITY_RANK = { critical: 0, high: 1, urgent: 1, medium: 2, normal: 2, low: 3 };
 
 // Kanban lanes the board renders, and the canonical status each maps to on a move.
@@ -21,11 +23,7 @@ const VALID_LANES = new Set(Object.keys(LANE_TO_STATUS));
 const VALID_ASSIGNEE_KINDS = new Set(['agent', 'human']);
 
 function isOpenStatus(status) {
-  return !DONE_STATUSES.has(
-    String(status || '')
-      .trim()
-      .toLowerCase()
-  );
+  return CLAIMABLE_STATUSES.has(String(status || '').trim().toLowerCase());
 }
 
 function priorityRank(priority) {
@@ -65,13 +63,19 @@ function claimWorkItem(store, { id, owner, assigneeKind, sessionId, status } = {
   if (!target) {
     return { claimed: false, reason: 'no-unassigned-open-items' };
   }
-  if (!isOpenStatus(target.status)) {
-    throw new Error(`Work item ${target.id} is already done; cannot claim.`);
-  }
   if (target.owner) {
     if (target.owner !== owner) {
       throw new Error(`Work item ${target.id} is already owned by ${target.owner}; cannot claim.`);
     }
+    // Repeating an active claim by the same owner is idempotent.
+    if (['running', 'claimed'].includes(String(target.status).trim().toLowerCase())) {
+      return { claimed: true, item: target };
+    }
+  }
+  if (!isOpenStatus(target.status)) {
+    throw new Error(`Work item ${target.id} is not READY; cannot claim.`);
+  }
+  if (target.owner) {
     return { claimed: true, item: target };
   }
   const metadata = { ...(target.metadata || {}) };
