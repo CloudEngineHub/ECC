@@ -409,6 +409,117 @@ test('deep analyzer evidence scenario rejects no-corpus analyzer changes', () =>
   assert.ok(playbook.includes('Deep Analyzer Evidence'));
 });
 
+test('connector gap artifacts share identity and preserve read-only scope', () => {
+  const scenario = readFixtureJson('connector-diagnostics-gap/scenario.json');
+  assert.strictEqual(scenario.scenario_id, 'connector-diagnostics-gap');
+  assert.strictEqual(scenario.mode, 'read_only_prototype');
+  for (const [file, schema] of [
+    ['trace.json', 'trace'], ['report.json', 'report'], ['verifier-result.json', 'verifier']
+  ]) {
+    const artifact = readFixtureJson(`connector-diagnostics-gap/${file}`);
+    assert.strictEqual(artifact.schema_version, `ecc.evaluator-rag.${schema}.v1`);
+    assert.strictEqual(artifact.scenario_id, scenario.scenario_id);
+    assert.strictEqual(artifact.run_id, 'illustrative-connector-gap');
+    assert.strictEqual(artifact.read_only, true);
+  }
+  assert.strictEqual(scenario.schema_version, 'ecc.evaluator-rag.scenario.v1');
+});
+
+test('connector gap decisions reject unsupported monitors and preserve uncertainty', () => {
+  const scenario = readFixtureJson('connector-diagnostics-gap/scenario.json');
+  const trace = readFixtureJson('connector-diagnostics-gap/trace.json');
+  const verifier = readFixtureJson('connector-diagnostics-gap/verifier-result.json');
+  const playbook = read('examples/evaluator-rag-prototype/connector-diagnostics-gap/candidate-playbook.md');
+  const accepted = verifier.candidates.find(candidate => candidate.candidate_id === 'bounded-event-summary');
+  const rejected = verifier.candidates.find(candidate => candidate.candidate_id === 'new-monitor-without-inventory');
+  assert.ok(accepted, 'Missing bounded summary candidate');
+  assert.ok(rejected, 'Missing unsupported monitor candidate');
+  assert.strictEqual(accepted.decision, 'accepted');
+  assert.strictEqual(rejected.decision, 'rejected');
+  assert.strictEqual(verifier.promoted_candidate_id, accepted.candidate_id);
+  assert.ok(trace.events.some(event => event.promoted_candidate_id === accepted.candidate_id));
+  assert.strictEqual(trace.illustrative, true);
+  assert.strictEqual(verifier.evaluation_status, 'illustrative_expected_decisions_not_executed_connector_checks');
+  assert.ok(accepted.reasons.includes('Keeps retention and deployed settings unknown until checked'));
+  assert.ok(rejected.reasons.includes('Infers absent capability from an unavailable settings channel'));
+  assert.ok(scenario.forbidden_actions.includes('treating unavailable research as proof of missing capability'));
+  assert.ok(scenario.forbidden_actions.includes('claiming the reported incident is a reproduced ECC defect'));
+  assert.ok(scenario.forbidden_actions.includes('deploying a background monitor from this evaluator'));
+  assert.ok(scenario.acceptance_gates.includes('state the observed limitation separately from unknown settings'));
+  assert.ok(playbook.includes('If research is unavailable, preserve the uncertainty and next targeted read'));
+  assert.ok(playbook.includes('Do not deploy components or change connector configuration'));
+});
+
+test('connector report records unscored fixture coverage and verifier rollback', () => {
+  const report = readFixtureJson('connector-diagnostics-gap/report.json');
+  const verifier = readFixtureJson('connector-diagnostics-gap/verifier-result.json');
+  assert.strictEqual(report.scoring.status, 'not_performed');
+  assert.strictEqual(report.scoring.scores, null);
+  assert.strictEqual(report.evidence_coverage.kind, 'synthetic_fixture_only');
+  assert.deepStrictEqual(report.evidence_coverage.sources, [
+    'scenario.json#/inputs/inspected_capabilities',
+    'scenario.json#/inputs/unavailable_channels',
+    'trace.json#/events',
+    'candidate-playbook.md#worked-comparison',
+    'scenario.json#/inputs/management_preparation',
+    'scenario.json#/inputs/target_contract'
+  ]);
+  assert.ok(report.evidence_coverage.gaps.includes('Event retention and deployed settings are unknown.'));
+  assert.strictEqual(report.recommended_next_action.candidate_id, verifier.promoted_candidate_id);
+  assert.ok(verifier.rollback.current_run.includes('No connector state is changed'));
+  assert.ok(verifier.rollback.future_extension.includes('revert the summary extension'));
+});
+
+test('connector preparation scopes unavailable SSH to dependent host checks', () => {
+  const scenario = readFixtureJson('connector-diagnostics-gap/scenario.json');
+  const verifier = readFixtureJson('connector-diagnostics-gap/verifier-result.json');
+  const variant = scenario.inputs.management_preparation;
+  assert.strictEqual(variant.management_access, 'existing_mcp_api_reads');
+  assert.strictEqual(variant.continuous_collection, 'not_configured');
+  assert.deepStrictEqual(variant.unavailable_path.blocks, ['host-level checks on server A']);
+  assert.deepStrictEqual(variant.independent_preparation, [
+    'prepare monitoring templates', 'map existing management capabilities',
+    'inspect the existing notification channel'
+  ]);
+  const decision = verifier.management_preparation;
+  assert.strictEqual(decision.decision, 'continue_independent_preparation');
+  assert.deepStrictEqual(decision.blocked_work, variant.unavailable_path.blocks);
+  assert.deepStrictEqual(decision.continue_work, variant.independent_preparation);
+  assert.deepStrictEqual(decision.not_established, [
+    'continuous collection readiness', 'notification delivery', 'authority for arbitrary changes'
+  ]);
+  assert.deepStrictEqual(decision.rejected_inferences, [
+    'unavailable SSH blocks all monitoring preparation',
+    'existing management access requires redundant installation',
+    'successful management reads prove collection or notification readiness'
+  ]);
+});
+
+test('target contract dependencies are reassessed only after explicit scope revision', () => {
+  const scenario = readFixtureJson('connector-diagnostics-gap/scenario.json');
+  const verifier = readFixtureJson('connector-diagnostics-gap/verifier-result.json');
+  const trace = readFixtureJson('connector-diagnostics-gap/trace.json');
+  const report = readFixtureJson('connector-diagnostics-gap/report.json');
+  const playbook = read('examples/evaluator-rag-prototype/connector-diagnostics-gap/candidate-playbook.md');
+  const input = scenario.inputs.target_contract;
+  assert.strictEqual(input.target_sample, 'unread');
+  assert.strictEqual(input.mandatory_fields, 'unconfirmed');
+  assert.strictEqual(input.development_authorized, true);
+  assert.deepStrictEqual(input.documented_variants, ['separate payment document', 'document payment section']);
+  const result = verifier.target_contract;
+  assert.strictEqual(result.before_stop.document_filling, 'hold_for_target_mapping');
+  assert.strictEqual(result.after_stop.candidate_state, 'unfinished_not_promoted');
+  assert.strictEqual(result.after_stop.action, 'stop_requested_work');
+  assert.strictEqual(result.after_scope_revision.authorization_source, 'explicit_user_scope_revision');
+  assert.deepStrictEqual(result.after_scope_revision.continue_work, ['fact storage', 'fact validation']);
+  assert.strictEqual(result.after_scope_revision.document_filling, 'separate_phase_awaiting_target_contract');
+  assert.strictEqual(result.after_scope_revision.erases_earlier_sequencing_error, false);
+  assert.ok(trace.events.some(event => event.variant === 'target_contract'));
+  assert.ok(report.evidence_coverage.sources.includes('scenario.json#/inputs/target_contract'));
+  assert.ok(playbook.includes('General development authorization does not confirm the active target contract'));
+  assert.ok(playbook.includes('An explicit stop halts the requested work'));
+});
+
 if (failed > 0) {
   console.log(`\nFailed: ${failed}`);
   process.exit(1);

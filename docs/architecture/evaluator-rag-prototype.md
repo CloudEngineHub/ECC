@@ -123,6 +123,11 @@ Current corpus:
   expected-output comparisons, representative repository/commit histories, and
   regression commands before deep-analysis behavior can be promoted.
 
+- `connector-diagnostics-gap`: inventories an already-used connector, separates
+  observed gaps from unavailable research, and requires evidence before a new
+  background component is proposed. Decisions are illustrative, not executed
+  connector checks.
+
 ## ECC Tools Mapping
 
 ECC Tools already flags missing RAG/evaluator evidence for retrieval,
