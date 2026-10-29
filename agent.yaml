@@ -89,6 +89,7 @@ skills:
   - inventory-demand-planning
   - investor-materials
   - investor-outreach
+  - issue-review
   - iterative-retrieval
   - java-coding-standards
   - jpa-patterns
@@ -217,6 +218,7 @@ commands:
   - instinct-export
   - instinct-import
   - instinct-status
+  - issue-review
   - jira
   - kotlin-build
   - kotlin-review
