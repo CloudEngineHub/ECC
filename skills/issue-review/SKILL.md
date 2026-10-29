@@ -40,12 +40,14 @@ Parse the input to find the issue:
 | URL (`github.com/owner/repo/issues/123`) | Extract owner, repo, and number |
 | `owner/repo#123` | Explicit cross-repository reference |
 
+Resolve `HOST`, owner, repository, and number **before the first fetch**. For a full issue URL, use its validated GitHub host and path. For a bare number, derive the host and repository from the trusted checkout remote; if that identity is unavailable or ambiguous, request the full issue URL. For `owner/repo#123`, use `github.com` unless the user explicitly supplied another trusted GitHub host. Do not use ambient `GH_HOST` or `GH_REPO` to replace this selected target.
+
 ```bash
 gh issue view <NUMBER> --repo <HOST/OWNER/REPO> \
   --json number,title,body,author,state,labels,assignees,milestone,createdAt,updatedAt,comments,url
 ```
 
-Stop with a clear error if the issue does not exist, if `gh` is not authenticated, or if the number is a pull request. Store the metadata for the later phases. Derive HOST from the canonical issue URL and keep it in every `--repo` value; do not let an ambient `GH_HOST` redirect later requests.
+Stop with a clear error if the issue does not exist, if `gh` is not authenticated, or if the number is a pull request. Store the metadata for the later phases. Verify the returned canonical issue URL matches the selected host/repository/number and retain that identity in every `--repo` value; do not let an ambient `GH_HOST` redirect later requests.
 
 ### Phase 2: CONTEXT
 
