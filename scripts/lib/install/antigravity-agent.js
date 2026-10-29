@@ -1,9 +1,14 @@
 'use strict';
 
+const { normalizeAgentTools } = require('../agent-tools');
+
 const TOOL_NAMES = Object.freeze({
   Read: 'view_file',
+  ReadFile: 'view_file',
+  NotebookRead: 'view_file',
   Write: 'write_to_file',
   Edit: 'replace_file_content',
+  MultiEdit: 'replace_file_content',
   Grep: 'grep_search',
   Glob: 'find_by_name',
   Bash: 'run_command',
@@ -18,7 +23,10 @@ const MODEL_NAMES = Object.freeze({
 });
 
 function splitFrontmatter(source, label) {
-  const match = String(source || '').match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+  const raw = String(source || '');
+  const usesCrlf = raw.includes('\r\n');
+  const normalized = usesCrlf ? raw.replace(/\r\n/g, '\n') : raw;
+  const match = normalized.match(/^---\n([\s\S]*?)\n---\n/);
   if (!match) {
     throw new Error(`Cannot adapt Antigravity agent ${label}: missing YAML frontmatter`);
   }
@@ -33,20 +41,19 @@ function splitFrontmatter(source, label) {
 
   return {
     frontmatter,
-    body: source.slice(match[0].length),
+    body: normalized.slice(match[0].length),
+    usesCrlf,
   };
 }
 
 function normalizeToolNames(value) {
-  const names = Array.isArray(value) ? value : String(value || '').split(',');
-  return [...new Set(names
-    .map(name => String(name).trim())
+  return [...new Set(normalizeAgentTools(value)
     .filter(name => Object.hasOwn(TOOL_NAMES, name))
     .map(name => TOOL_NAMES[name]))];
 }
 
 function adaptAntigravityAgent(source, label = '<unknown>') {
-  const { frontmatter, body } = splitFrontmatter(source, label);
+  const { frontmatter, body, usesCrlf } = splitFrontmatter(source, label);
   const { color: _claudeColor, ...supportedFrontmatter } = frontmatter;
   const adapted = { ...supportedFrontmatter };
   if (Object.hasOwn(frontmatter, 'tools')) {
@@ -60,9 +67,12 @@ function adaptAntigravityAgent(source, label = '<unknown>') {
   const serialized = require('js-yaml')
     .dump(adapted, { lineWidth: -1, noRefs: true })
     .trimEnd();
-  return `---\n${serialized}\n---\n${body}`;
+  const output = `---\n${serialized}\n---\n${body}`;
+  return usesCrlf ? output.replace(/\n/g, '\r\n') : output;
 }
 
 module.exports = {
   adaptAntigravityAgent,
+  MODEL_NAMES,
+  TOOL_NAMES,
 };
