@@ -74,9 +74,10 @@ function assertResolvesScript(skillName, script) {
   const skill = readSkill(skillName);
   assert.ok(skill.includes(RESOLVER_SNIPPET),
     `${skillName} must probe the plugin root, the standalone install and the checkout`);
-  assert.match(skill,
-    new RegExp(`\\[ -f "\\$ECC_ROOT/scripts/${escapeRegExp(script)}" \\] \\|\\| ECC_ROOT="\\$PWD"`),
-    `${skillName} must verify the resolved script exists before falling back to the checkout`);
+  assert.ok(skill.includes(`if [ ! -f "$ECC_ROOT/scripts/${script}" ]; then`),
+    `${skillName} must probe the resolved helper before considering a checkout`);
+  assert.ok(skill.includes('[ -f "$PWD/.claude-plugin/plugin.json" ] && [ -f "$PWD/package.json" ]'),
+    `${skillName} must identify an ECC checkout before executing a PWD helper`);
   assert.match(skill, new RegExp(`node "\\$ECC_ROOT/scripts/${escapeRegExp(script)}"`),
     `${skillName} must run the script from the resolved ECC root`);
   assert.doesNotMatch(skill, /\$\{CLAUDE_PLUGIN_ROOT:-\$PWD\}/,
@@ -209,6 +210,18 @@ test('documented detector command fails loudly when no ECC root resolves', () =>
     `expected an explicit failure, got exit ${result.status}: ${result.stdout}`);
   assert.match(result.stderr, /ECC scripts not found/);
   assert.doesNotMatch(result.stderr, /Cannot find module/);
+});
+
+test('documented detector refuses a user-project lookalike script without an ECC checkout marker', () => {
+  if (process.platform === 'win32') skip('executed fixture requires a POSIX shell');
+  const marker = path.join(fixture.userProject, 'lookalike-ran');
+  const script = path.join(fixture.userProject, 'scripts', 'setup-package-manager.js');
+  fs.mkdirSync(path.dirname(script));
+  fs.writeFileSync(script, `require('fs').writeFileSync(${JSON.stringify(marker)}, 'executed');\n`);
+  const result = runDetector({ pluginRoot: null, home: fixture.emptyHome, cwd: fixture.userProject });
+  assert.strictEqual(result.status, 1, result.stderr || result.stdout);
+  assert.match(result.stderr, /ECC scripts not found/);
+  assert.ok(!fs.existsSync(marker), 'the project lookalike helper must not execute');
 });
 
 fs.rmSync(fixture.base, { recursive: true, force: true });

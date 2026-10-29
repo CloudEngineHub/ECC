@@ -228,6 +228,22 @@ test('normal installed Copilot TDD command runs from the project with a complete
     const detected = spawnSync(process.execPath, [command[1], '--detect'], { cwd: project, env, encoding: 'utf8', timeout: 15000 });
     assert.strictEqual(detected.status, 0, detected.stderr);
     assert.match(detected.stdout, /pnpm/);
+    if (process.platform !== 'win32') {
+      const detectorBlock = [...skill.matchAll(/```bash\r?\n([\s\S]*?)```/g)]
+        .map(match => match[1]).find(block => block.includes('setup-package-manager.js'));
+      assert.ok(detectorBlock, 'installed skill must retain its executable Bash example');
+      assert.doesNotMatch(detectorBlock, /ECC_ROOT|CLAUDE_PLUGIN_ROOT/,
+        'Copilot must use its managed project helper instead of a Claude resolver');
+      const actualRecipe = spawnSync('bash', ['-c', detectorBlock], {
+        cwd: project, encoding: 'utf8', timeout: 15000,
+        env: { ...env, HOME: homeDir, USERPROFILE: homeDir,
+          CLAUDE_PLUGIN_ROOT: path.join(project, 'wrong-plugin'), CLAUDE_CONFIG_DIR: path.join(project, 'wrong-config') }
+      });
+      assert.ifError(actualRecipe.error);
+      assert.strictEqual(actualRecipe.status, 0, actualRecipe.stderr);
+      assert.match(actualRecipe.stdout, /pnpm/);
+    }
+
     assert.ok(!plan.operations.some(operation => operation.kind === 'update-claude-settings'
       || /[\\/]\.github[\\/]hooks[\\/]|[\\/]ecc[\\/]scripts[\\/]hooks[\\/]|settings\.json$|hooks\.json$/.test(operation.destinationPath)), 'Copilot must not register hooks');
     assert.strictEqual(fs.readFileSync(path.join(project, 'scripts', 'setup-package-manager.js'), 'utf8'), 'USER PROJECT SENTINEL\n');

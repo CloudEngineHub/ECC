@@ -172,12 +172,12 @@ Use this report shape:
 
 ### Phase 8: PUBLISH (opt-in only)
 
-The default is draft only. Nothing is written to GitHub unless the user passed an explicit flag, and the exact text or labels are shown before the write.
+The default is draft only. Nothing is written to GitHub unless the user passed an explicit flag, and the exact text or labels are shown before the write. Immediately before publishing, recheck the fetched issue URL and require its canonical owner, repository and issue number to match the reviewed target. Bind every write to that repository with `--repo <OWNER/REPO>`; never let the current checkout select the target.
 
 | Flag | Effect |
 |---|---|
-| `--comment` | Post the draft reply with `gh issue comment <NUMBER> --body-file <file>` |
-| `--label` | Apply the suggested labels with `gh issue edit <NUMBER> --add-label <labels>` |
+| `--comment` | Post the draft reply with `gh issue comment <NUMBER> --repo <OWNER/REPO> --body-file <file>` |
+| `--label` | Apply the suggested labels with `gh issue edit <NUMBER> --repo <OWNER/REPO> --add-label <labels>` |
 
 Never close, reopen, assign, or transfer an issue from this workflow. Those are maintainer decisions that stay manual.
 

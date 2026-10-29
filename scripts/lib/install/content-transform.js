@@ -10,7 +10,23 @@ function rewriteCopilotWorkflowPaths(content, sourceRelativePath) {
   if (!/\.md$/i.test(sourceRelativePath)) return content;
   // Commands run from the installed project root. Rewrite only the supported
   // helper entrypoint, leaving unrelated project scripts and URLs untouched.
-  return content.replace(/(^|[\s`"'(])scripts\/setup-package-manager\.js\b/g,
+  let projectedDetector = false;
+  let projected = content.replace(/(^[ \t]*```bash\r?\n)([\s\S]*?)(^[ \t]*```)/gm,
+    (block, opening, body, closing) => {
+      if (!/^\s*ECC_ROOT=/m.test(body)
+        || !/^\s*node "\$ECC_ROOT\/scripts\/setup-package-manager\.js" --detect\s*$/m.test(body)) {
+        return block;
+      }
+      projectedDetector = true;
+      const indent = opening.match(/^[ \t]*/)[0];
+      const newline = opening.endsWith('\r\n') ? '\r\n' : '\n';
+      return `${opening}${indent}node .github/ecc/scripts/setup-package-manager.js --detect${newline}${closing}`;
+    });
+  if (projectedDetector) {
+    projected = projected.replace(/^([ \t]*)The resolution lines locate ECC's script[^\r\n]*$/gm,
+      '$1This Copilot projection runs the detector from the managed .github/ecc/scripts/ closure in the project root. It preserves the project working directory and does not use Claude plugin or home-directory resolution.');
+  }
+  return projected.replace(/(^|[\s`"'(])scripts\/setup-package-manager\.js\b/g,
     '$1.github/ecc/scripts/setup-package-manager.js');
 }
 

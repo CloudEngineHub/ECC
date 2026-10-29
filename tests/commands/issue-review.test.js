@@ -18,6 +18,8 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const { spawnSync } = require('child_process');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const skillPath = path.join(repoRoot, 'skills', 'issue-review', 'SKILL.md');
@@ -122,6 +124,56 @@ test('SKILL.md makes every GitHub write opt-in and previewed', () => {
     assert.strictEqual(total, inPublish, `Expected ${pattern} only inside the PUBLISH phase`);
   }
   assert.ok(!/gh issue close/.test(skill), 'Expected no gh issue close anywhere in the skill');
+});
+
+test('every GitHub write binds the fetched repository instead of the ambient checkout', () => {
+  const publish = sectionBody(skill, '### Phase 8: PUBLISH (opt-in only)');
+  const commands = [...publish.matchAll(/`(gh issue (?:comment|edit) [^`]+)`/g)].map(match => match[1]);
+  assert.strictEqual(commands.length, 2, 'Expected comment and label publication examples');
+  for (const command of commands) {
+    assert.ok(command.includes('--repo <OWNER/REPO>'), command);
+  }
+  assert.ok(publish.includes('recheck the fetched issue URL'), 'Expected a fresh identity check before publication');
+});
+
+test('documented cross-repository writes replay through gh without selecting the current checkout', () => {
+  if (process.platform === 'win32') {
+    console.log('    SKIP executable gh stub uses a POSIX shebang; repository-binding assertions still run');
+    return;
+  }
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-issue-review-gh-'));
+  const bin = path.join(temporary, 'bin');
+  const ambient = path.join(temporary, 'ambient-checkout');
+  fs.mkdirSync(bin);
+  fs.mkdirSync(ambient);
+  try {
+    fs.writeFileSync(path.join(bin, 'gh'), [
+      '#!/usr/bin/env node',
+      'const args = process.argv.slice(2);',
+      'const at = args.indexOf("--repo");',
+      'process.stdout.write(JSON.stringify({args, repo: at < 0 ? "ambient-owner/ambient-repo" : args[at + 1]}));',
+      ''
+    ].join('\n'), { mode: 0o755 });
+    const publish = sectionBody(skill, '### Phase 8: PUBLISH (opt-in only)');
+    const commands = [...publish.matchAll(/`(gh issue (?:comment|edit) [^`]+)`/g)].map(match => match[1]);
+    assert.strictEqual(commands.length, 2);
+    for (const command of commands) {
+      const expanded = command.replace('<NUMBER>', '17').replace('<OWNER/REPO>', 'other-owner/other-repo')
+        .replace('<file>', 'draft.md').replace('<labels>', 'bug');
+      const [executable, ...args] = expanded.split(/\s+/);
+      const result = spawnSync(executable, args, {
+        cwd: ambient, encoding: 'utf8', timeout: 5000,
+        env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH || ''}` }
+      });
+      assert.ifError(result.error);
+      assert.strictEqual(result.status, 0, result.stderr);
+      const invocation = JSON.parse(result.stdout);
+      assert.strictEqual(invocation.repo, 'other-owner/other-repo', expanded);
+      assert.strictEqual(invocation.args[2], '17');
+    }
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 test('SKILL.md redirects pull request numbers to /code-review', () => {

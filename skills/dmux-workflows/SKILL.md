@@ -145,7 +145,10 @@ ECC now includes a helper for external tmux-pane orchestration with separate git
 # Resolve the ECC root in every install mode: plugin root, standalone install
 # (~/.claude or $CLAUDE_CONFIG_DIR), then an ECC checkout run from its root.
 ECC_ROOT="${CLAUDE_PLUGIN_ROOT:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}"
-[ -f "$ECC_ROOT/scripts/orchestrate-worktrees.js" ] || ECC_ROOT="$PWD"
+if [ ! -f "$ECC_ROOT/scripts/orchestrate-worktrees.js" ]; then
+  [ -f "$PWD/.claude-plugin/plugin.json" ] && [ -f "$PWD/package.json" ] || { echo "ECC scripts not found (set CLAUDE_PLUGIN_ROOT or run from an ECC checkout)" >&2; exit 1; }
+  ECC_ROOT="$PWD"
+fi
 [ -f "$ECC_ROOT/scripts/orchestrate-worktrees.js" ] || { echo "ECC scripts not found (set CLAUDE_PLUGIN_ROOT or run from an ECC checkout)" >&2; exit 1; }
 node "$ECC_ROOT/scripts/orchestrate-worktrees.js" plan.json --execute
 ```
