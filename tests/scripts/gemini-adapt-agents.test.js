@@ -275,6 +275,66 @@ function runTests() {
     }
   })) passed++; else failed++;
 
+  if (test('strips unquoted inline YAML comments on block-list items while preserving quoted # literals', () => {
+    const tempDir = createTempDir();
+    const agentsDir = path.join(tempDir, '.gemini', 'agents');
+
+    try {
+      writeAgent(
+        agentsDir,
+        'inline-comments.md',
+        [
+          '---',
+          'name: inline-comments',
+          'description: Inline comment handling',
+          'tools: # allowed tools',
+          '  - Read # inspect files',
+          '  - "Read # explanation" # trailing comment',
+          '  - \'Grep # literal\' # another comment',
+          '---',
+          '',
+          'Body'
+        ].join('\n')
+      );
+
+      const result = run([agentsDir]);
+      assert.strictEqual(result.code, 0, result.stderr);
+
+      const updated = fs.readFileSync(path.join(agentsDir, 'inline-comments.md'), 'utf8');
+      assert.ok(
+        updated.includes('tools: ["read_file", "Read # explanation", "Grep # literal"]'),
+        updated
+      );
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  })) passed++; else failed++;
+
+  if (test('preserves mixed line endings in the body verbatim when adapting frontmatter', () => {
+    const tempDir = createTempDir();
+    const agentsDir = path.join(tempDir, '.gemini', 'agents');
+    const mixedBody = '\nFirst LF line\nPasted CRLF line\r\nFinal LF line\n';
+
+    try {
+      writeAgent(
+        agentsDir,
+        'mixed-endings.md',
+        `---\nname: mixed-endings\ntools: Read, Bash\ncolor: purple\n---\n${mixedBody}`
+      );
+
+      const result = run([agentsDir]);
+      assert.strictEqual(result.code, 0, result.stderr);
+
+      const updated = fs.readFileSync(path.join(agentsDir, 'mixed-endings.md'), 'utf8');
+      assert.strictEqual(
+        updated,
+        `---\nname: mixed-endings\ntools: ["read_file", "run_shell_command"]\n---\n${mixedBody}`
+      );
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  })) passed++; else failed++;
+
   console.log(`\nResults: Passed: ${passed}, Failed: ${failed}`);
   process.exit(failed > 0 ? 1 : 0);
 }

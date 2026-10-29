@@ -67,13 +67,59 @@ function ensureDirectory(dirPath) {
   }
 }
 
+function stripUnquotedYamlComment(value) {
+  let quote = null;
+  let escaped = false;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+
+    if (quote === '"') {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === '"') {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (quote === "'") {
+      if (character === "'") {
+        if (value[index + 1] === "'") {
+          index += 1;
+        } else {
+          quote = null;
+        }
+      }
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+
+    if (character === '#' && (index === 0 || /\s/.test(value[index - 1]))) {
+      return value.slice(0, index).trim();
+    }
+  }
+
+  return value.trim();
+}
+
 function parseToolList(line) {
   const match = line.match(/^\s*tools\s*:\s*(.*)$/);
   if (!match) {
     return null;
   }
 
-  return normalizeAgentTools(match[1]);
+  const rawValue = stripUnquotedYamlComment(match[1]);
+  return {
+    isEmptyScalar: rawValue === '',
+    tools: normalizeAgentTools(rawValue),
+  };
 }
 
 function adaptToolName(toolName) {
@@ -98,20 +144,20 @@ function formatToolLine(tools) {
 }
 
 function adaptFrontmatter(text) {
-  // Normalize CRLF first. Matching only LF would silently skip a Windows-saved
-  // agent and report it as already compatible while `tools: Read` and
-  // `color: ...` stayed in place. The original ending style is restored below.
-  const usesCrlf = text.includes('\r\n');
-  const source = usesCrlf ? text.replace(/\r\n/g, '\n') : text;
-
-  const match = source.match(/^---\n([\s\S]*?)\n---(\n|$)/);
+  // Match both LF and CRLF frontmatter delimiters while keeping the body slice
+  // completely untouched so mixed line endings in the body are preserved verbatim.
+  const match = text.match(/^---(\r?\n)([\s\S]*?)\r?\n---(\r?\n|$)/);
   if (!match) {
     return { text, changed: false };
   }
 
+  const headerEol = match[1];
+  const trailingFenceEol = match[3];
+  const originalBody = text.slice(match[0].length);
+
   let changed = false;
   const updatedLines = [];
-  const lines = match[1].split('\n');
+  const lines = match[2].replace(/\r\n/g, '\n').split('\n');
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
@@ -120,15 +166,19 @@ function adaptFrontmatter(text) {
       continue;
     }
 
-    let tools = parseToolList(line);
-    if (tools !== null && tools.length === 0 && /^\s*tools\s*:\s*$/.test(line)) {
+    const parsedTools = parseToolList(line);
+    let tools = parsedTools ? parsedTools.tools : null;
+    if (parsedTools && parsedTools.isEmptyScalar) {
       const sequenceItems = [];
       let lookahead = index;
       while (lookahead + 1 < lines.length && /^(?:\s*#|\s*$|(?:\s*-\s+.*))/.test(lines[lookahead + 1])) {
         lookahead += 1;
         const itemMatch = lines[lookahead].match(/^\s*-\s+(.*)$/);
         if (itemMatch) {
-          sequenceItems.push(itemMatch[1]);
+          const cleanedItem = stripUnquotedYamlComment(itemMatch[1]);
+          if (cleanedItem) {
+            sequenceItems.push(cleanedItem);
+          }
         }
       }
       if (sequenceItems.length > 0) {
@@ -165,10 +215,10 @@ function adaptFrontmatter(text) {
     return { text, changed: false };
   }
 
-  const adapted = `---\n${updatedLines.join('\n')}\n---${match[2]}${source.slice(match[0].length)}`;
+  const adaptedHeader = `---${headerEol}${updatedLines.join(headerEol)}${headerEol}---${trailingFenceEol}`;
 
   return {
-    text: usesCrlf ? adapted.replace(/\n/g, '\r\n') : adapted,
+    text: `${adaptedHeader}${originalBody}`,
     changed: true,
   };
 }
@@ -185,7 +235,7 @@ function adaptAgents(dirPath) {
       continue;
     }
 
-    const filePath = path.join(dirPath, entry.name);
+    const filePath = path.join(dirPath, path.basename(entry.name));
     const original = fs.readFileSync(filePath, 'utf8');
     const adapted = adaptFrontmatter(original);
     prepared.push({ filePath, adapted });
