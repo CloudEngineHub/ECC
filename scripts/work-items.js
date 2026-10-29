@@ -229,7 +229,7 @@ function buildGithubPrWorkItem(repo, pr, options = {}) {
     status: githubPrStatus(pr),
     priority: pr.isDraft || pr.mergeStateStatus === 'DIRTY' ? 'high' : 'normal',
     url: pr.url || null,
-    owner: githubAuthorLogin(pr),
+    owner: null,
     repoRoot: options.repoRoot || process.cwd(),
     sessionId: options.sessionId || null,
     metadata: {
@@ -238,6 +238,7 @@ function buildGithubPrWorkItem(repo, pr, options = {}) {
       mergeStateStatus: pr.mergeStateStatus || null,
       isDraft: Boolean(pr.isDraft),
       headRefName: pr.headRefName || null,
+      sourceAuthor: githubAuthorLogin(pr),
       sourceUpdatedAt: pr.updatedAt || null,
       syncedBy: 'ecc-work-items-sync-github'
     }
@@ -253,17 +254,50 @@ function buildGithubIssueWorkItem(repo, issue, options = {}) {
     status: 'needs-review',
     priority: 'normal',
     url: issue.url || null,
-    owner: githubAuthorLogin(issue),
+    owner: null,
     repoRoot: options.repoRoot || process.cwd(),
     sessionId: options.sessionId || null,
     metadata: {
       repo,
       type: 'issue',
       labels: Array.isArray(issue.labels) ? issue.labels.map(label => label.name || label).filter(Boolean) : [],
+      sourceAuthor: githubAuthorLogin(issue),
       sourceUpdatedAt: issue.updatedAt || null,
       syncedBy: 'ecc-work-items-sync-github'
     }
   };
+}
+
+function githubWorkflowState(item) {
+  return Object.fromEntries(['status', 'owner', 'sessionId', 'priority', 'repoRoot']
+    .map(key => [key, item[key] ?? null]));
+}
+
+function isLocallyManagedGithubItem(item) {
+  const metadata = item.metadata || {};
+  const sync = metadata.githubSync;
+  // Legacy imports have no reliable record of their original owner/status.
+  if (!sync || !sync.state || sync.managedLocally || metadata.assigneeKind) return true;
+  return Object.entries(githubWorkflowState(item)).some(([key, value]) => value !== sync.state[key]);
+}
+
+function refreshGithubWorkItem(store, payload, syncedAt) {
+  const existing = store.getWorkItemById(payload.id);
+  const preserveExisting = existing && isLocallyManagedGithubItem(existing);
+  const managedLocally = Boolean(preserveExisting || payload.sessionId);
+  const state = githubWorkflowState(preserveExisting ? existing : payload);
+  const { sourceClosedAt: _sourceClosedAt, ...metadata } = (existing && existing.metadata) || {};
+  return store.upsertWorkItem({
+    ...payload,
+    ...state,
+    metadata: {
+      ...metadata,
+      ...payload.metadata,
+      githubSync: { state, managedLocally }
+    },
+    createdAt: existing ? existing.createdAt : undefined,
+    updatedAt: syncedAt
+  });
 }
 
 function closeStaleGithubItems(store, repo, activeIds, options = {}) {
@@ -279,6 +313,15 @@ function closeStaleGithubItems(store, repo, activeIds, options = {}) {
     if (item.status === 'closed' || item.status === 'done') {
       continue;
     }
+    if (isLocallyManagedGithubItem(item)) {
+      if (!item.metadata.githubSync || !item.metadata.githubSync.managedLocally) {
+        store.upsertWorkItem({
+          ...item,
+          metadata: { ...item.metadata, githubSync: { state: githubWorkflowState(item), managedLocally: true } }
+        });
+      }
+      continue;
+    }
     closed.push(
       store.upsertWorkItem({
         ...item,
@@ -286,6 +329,7 @@ function closeStaleGithubItems(store, repo, activeIds, options = {}) {
         updatedAt: new Date().toISOString(),
         metadata: {
           ...item.metadata,
+          githubSync: { state: { ...githubWorkflowState(item), status: 'closed' }, managedLocally: false },
           sourceClosedAt: new Date().toISOString()
         }
       })
@@ -304,46 +348,35 @@ function syncGithubWorkItems(store, options) {
   const prs = runGhJson(['pr', 'list', '--repo', repo, '--state', 'open', '--limit', String(limit), '--json', 'number,title,author,url,updatedAt,mergeStateStatus,isDraft,headRefName']);
   const issues = runGhJson(['issue', 'list', '--repo', repo, '--state', 'open', '--limit', String(limit), '--json', 'number,title,author,url,updatedAt,labels']);
 
-  const syncedAt = new Date().toISOString();
-  const activeIds = new Set();
-  const items = [];
-  for (const pr of prs) {
-    const payload = buildGithubPrWorkItem(repo, pr, options);
-    const id = resolveGithubWorkItemId(store, payload);
-    activeIds.add(id);
-    items.push(
-      store.upsertWorkItem({
-        ...payload,
-        id,
-        createdAt: undefined,
-        updatedAt: syncedAt
-      })
-    );
-  }
-  for (const issue of issues) {
-    const payload = buildGithubIssueWorkItem(repo, issue, options);
-    const id = resolveGithubWorkItemId(store, payload);
-    activeIds.add(id);
-    items.push(
-      store.upsertWorkItem({
-        ...payload,
-        id,
-        createdAt: undefined,
-        updatedAt: syncedAt
-      })
-    );
-  }
+  // Fetch before taking the store lock, then reconcile against one current snapshot.
+  return store._database.transaction(() => {
+    const syncedAt = new Date().toISOString();
+    const activeIds = new Set();
+    const items = [];
+    for (const pr of prs) {
+      const candidate = buildGithubPrWorkItem(repo, pr, options);
+      const payload = { ...candidate, id: resolveGithubWorkItemId(store, candidate) };
+      activeIds.add(payload.id);
+      items.push(refreshGithubWorkItem(store, payload, syncedAt));
+    }
+    for (const issue of issues) {
+      const candidate = buildGithubIssueWorkItem(repo, issue, options);
+      const payload = { ...candidate, id: resolveGithubWorkItemId(store, candidate) };
+      activeIds.add(payload.id);
+      items.push(refreshGithubWorkItem(store, payload, syncedAt));
+    }
 
-  const closedItems = closeStaleGithubItems(store, repo, activeIds, { limit: Math.max(limit * 4, 1000) });
-  return {
-    repo,
-    syncedAt,
-    prCount: prs.length,
-    issueCount: issues.length,
-    closedCount: closedItems.length,
-    items,
-    closedItems
-  };
+    const closedItems = closeStaleGithubItems(store, repo, activeIds, { limit: Math.max(limit * 4, 1000) });
+    return {
+      repo,
+      syncedAt,
+      prCount: prs.length,
+      issueCount: issues.length,
+      closedCount: closedItems.length,
+      items,
+      closedItems
+    };
+  })();
 }
 
 function buildUpsertPayload(options, existing = null) {

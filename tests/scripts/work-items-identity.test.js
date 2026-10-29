@@ -216,11 +216,17 @@ test('closing stale items isolates punctuation variants and recognizes repositor
   const own = f.syncItems('Acme/Tool-Kit', responseFor('Acme/Tool-Kit')).items;
   const neighbor = f.syncItems('acme/tool_kit', responseFor('acme/tool_kit')).items;
   const closed = f.syncItems('ACME/TOOL-KIT', { issue: [], pr: [] });
-  assert.deepEqual(closed.closedItems.map(item => item.id).sort(), own.map(item => item.id).sort());
-  assert.equal(closed.closedCount, 2);
-  for (const item of own) {
+  // Legacy rows lack a source-state snapshot, so disappearing source data
+  // cannot silently close locally managed work. Fresh untouched imports follow it.
+  const sourceOwned = own.filter(item => item.id !== legacy.id);
+  assert.deepEqual(closed.closedItems.map(item => item.id).sort(), sourceOwned.map(item => item.id).sort());
+  assert.equal(closed.closedCount, 1);
+  for (const item of sourceOwned) {
     assert.equal((await f.withStore(store => store.getWorkItemById(item.id))).status, 'closed');
   }
+  const preserved = await f.withStore(store => store.getWorkItemById(legacy.id));
+  assert.equal(preserved.status, 'needs-review');
+  assert.equal(preserved.metadata.githubSync.managedLocally, true);
   for (const item of neighbor) {
     assert.equal((await f.withStore(store => store.getWorkItemById(item.id))).status, 'needs-review');
   }
@@ -236,6 +242,7 @@ test('encoded IDs round-trip through display, claim, and close commands', async 
     issue: response.issue.map(issue => ({ ...issue, author: null }))
   }).items[0];
   assert.match(imported.id, /%2F/);
+  await f.withStore(store => store.upsertWorkItem({ ...store.getWorkItemById(imported.id), status: 'ready' }));
 
   for (const args of [
     ['sync-github', '--repo', repo],
