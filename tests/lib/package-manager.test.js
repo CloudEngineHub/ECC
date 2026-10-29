@@ -767,8 +767,8 @@ function runTests() {
   // setPreferredPackageManager success
   console.log('\nsetPreferredPackageManager (success):');
 
-  if (test('successfully saves preferred package manager', () => {
-    // This writes to ~/.claude/package-manager.json — read original to restore
+  if (test('successfully saves preferred package manager', () => withIsolatedHome(() => {
+    // Writes ~/.claude/package-manager.json under the isolated home, not the real one
     const utils = require('../../scripts/lib/utils');
     const configPath = path.join(utils.getClaudeDir(), 'package-manager.json');
     const original = utils.readFile(configPath);
@@ -791,7 +791,7 @@ function runTests() {
         }
       }
     }
-  })) passed++;
+  }))) passed++;
   else failed++;
 
   // getCommandPattern completeness
