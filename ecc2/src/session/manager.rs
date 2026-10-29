@@ -7689,13 +7689,10 @@ mod tests {
             },
         );
         let db = StateStore::open(&cfg.db_path)?;
-        let original_dir = std::env::current_dir()?;
-        std::env::set_current_dir(&repo_root)?;
+        let _cwd_guard = crate::test_support::CurrentDirGuard::enter(&repo_root)?;
         let launch = launch_orchestration_template(
             &db, &cfg, "two-step", None, None, BTreeMap::new(),
-        ).await;
-        std::env::set_current_dir(original_dir)?;
-        let launch = launch?;
+        ).await?;
         assert_eq!(launch.created.len(), 2);
         let second_id = &launch.created[1].session_id;
         assert_eq!(db.unread_task_handoff_count(second_id)?, 1);
