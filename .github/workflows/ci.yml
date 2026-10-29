@@ -138,8 +138,8 @@ jobs:
             *) echo "Unsupported package manager: ${{ matrix.pm }}" && exit 1 ;;
           esac
 
-      - name: Check Windows observer and revision identity
-        if: runner.os == 'Windows' && matrix.scope == 'full'
+      - name: Check observer and revision identity
+        if: matrix.scope == 'full'
         shell: bash
         run: |
           node tests/lib/observer-sessions.test.js

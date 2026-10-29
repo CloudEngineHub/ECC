@@ -111,12 +111,28 @@ test('verification binds code evidence to the canonical issue repository', () =>
   assert.match(verify, /checkout root, HEAD SHA/);
 });
 
+function fixtureGitEnvironment(root, extra = {}) {
+  const env = Object.fromEntries(Object.entries(process.env)
+    .filter(([key]) => !/^(?:GIT_|BASH_ENV$|ENV$)/i.test(key)));
+  const home = path.join(root, '.git', 'ecc-fixture-home');
+  const config = path.join(home, 'gitconfig');
+  const templates = path.join(home, 'templates');
+  fs.mkdirSync(templates, { recursive: true });
+  if (!fs.existsSync(config)) fs.writeFileSync(config, '');
+  return {
+    ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'),
+    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_SYSTEM: config, GIT_CONFIG_GLOBAL: config,
+    GIT_CONFIG_COUNT: '0', GIT_TEMPLATE_DIR: templates, GIT_ATTR_NOSYSTEM: '1',
+    ...extra
+  };
+}
+
 function withTargetCheckout(fn) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-issue-review-target-'));
   function git(...args) {
     const result = spawnSync('git', ['-C', root, ...args], {
       encoding: 'utf8', timeout: 10000,
-      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' }
+      env: fixtureGitEnvironment(root)
     });
     assert.ifError(result.error);
     assert.strictEqual(result.status, 0, result.stderr);
@@ -139,20 +155,89 @@ function withTargetCheckout(fn) {
   }
 }
 
-function checkDocumentedTarget(root, targetSha) {
+function checkDocumentedTarget(root, targetSha, locale, deliberateRouting = {}) {
   const verify = sectionBody(skill, '### Phase 4: VERIFY');
   const gate = verify.match(/<<'ISSUE_REVIEW_TARGET_GATE'\r?\n([\s\S]*?)\r?\nISSUE_REVIEW_TARGET_GATE/);
   assert.ok(gate, 'Expected an executable checkout evidence gate in the workflow');
   const windowsBash = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe');
-  const bash = process.platform === 'win32' && fs.existsSync(windowsBash) ? windowsBash : 'bash';
-  const result = spawnSync(bash, ['-s', '--', root, targetSha], {
-    input: gate[1], encoding: 'utf8', timeout: 10000,
+  const bash = process.platform === 'darwin' ? '/bin/bash'
+    : process.platform === 'win32' && fs.existsSync(windowsBash) ? windowsBash : 'bash';
+  const mixedRoutingNames = Object.keys(deliberateRouting).filter(name => !name.startsWith('GIT_'));
+  const routingProbe = '\nshift 2\nfor inherited_name; do\n' +
+    '  if declare -p "$inherited_name" >/dev/null 2>&1; then\n' +
+    '    echo "Inherited Git routing survived: $inherited_name" >&2; exit 1\n' +
+    '  fi\ndone\n';
+  const result = spawnSync(bash, ['-s', '--', root, targetSha, ...mixedRoutingNames], {
+    input: gate[1] + routingProbe, encoding: 'utf8', timeout: 10000,
     // An inherited target must never replace the explicitly selected argument.
-    env: { ...process.env, TARGET_SHA: '0'.repeat(40) }
+    env: {
+      ...fixtureGitEnvironment(root, { TARGET_SHA: '0'.repeat(40), ...(locale ? { LC_ALL: locale, LANG: locale } : {}) }),
+      // Only the disposable-outer regression deliberately injects raw routing here.
+      ...deliberateRouting
+    }
   });
   assert.ifError(result.error);
   return result;
 }
+
+function snapshotFiles(root) {
+  const files = {};
+  function visit(directory) {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(file);
+      else files[path.relative(root, file)] = fs.readFileSync(file).toString('base64');
+    }
+  }
+  visit(root);
+  return files;
+}
+
+test('Git fixtures and documented evidence preserve a disposable outer repository under inherited routing', () => {
+  withTargetCheckout(({ root: outer, git: outerGit }) => {
+    outerGit('config', 'user.name', 'Outer Repository Owner');
+    fs.writeFileSync(path.join(outer, 'behavior.txt'), 'outer repository sentinel content\n');
+    outerGit('add', 'behavior.txt');
+    outerGit('commit', '-m', 'Distinct outer repository sentinel');
+    const inherited = {
+      GIT_DIR: path.join(outer, '.git'), GIT_WORK_TREE: outer,
+      GIT_COMMON_DIR: path.join(outer, '.git'), GIT_INDEX_FILE: path.join(outer, '.git', 'index'),
+      GIT_OBJECT_DIRECTORY: path.join(outer, '.git', 'objects'),
+      GIT_CONFIG: path.join(outer, '.git', 'config'), GIT_CONFIG_GLOBAL: path.join(outer, '.git', 'config'),
+      GIT_CONFIG_SYSTEM: path.join(outer, '.git', 'config'),
+      GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.worktree', GIT_CONFIG_VALUE_0: outer,
+      GIT_CONFIG_PARAMETERS: "'user.name=Injected Outer Name'"
+    };
+    const saved = Object.fromEntries(Object.keys(inherited).map(key => [key, process.env[key]]));
+    const before = snapshotFiles(outer);
+    try {
+      Object.assign(process.env, inherited);
+      withTargetCheckout(({ root, git, targetSha }) => {
+        assert.ok(fs.existsSync(path.join(root, '.git', 'config')), 'Fixture must initialize its own repository');
+        assert.strictEqual(git('config', 'user.name'), 'Issue Review Fixture');
+        assert.strictEqual(checkDocumentedTarget(root, targetSha).status, 0);
+        const rawGate = checkDocumentedTarget(root, targetSha, undefined, inherited);
+        assert.strictEqual(rawGate.status, 0, rawGate.stderr);
+        const mixedRouting = {
+          git_dir: inherited.GIT_DIR, Git_Work_Tree: inherited.GIT_WORK_TREE,
+          gIt_Common_Dir: inherited.GIT_COMMON_DIR, git_index_file: inherited.GIT_INDEX_FILE,
+          git_object_directory: inherited.GIT_OBJECT_DIRECTORY, gIt_Config: inherited.GIT_CONFIG,
+          git_config_parameters: inherited.GIT_CONFIG_PARAMETERS
+        };
+        const mixedGate = checkDocumentedTarget(root, targetSha, undefined, mixedRouting);
+        assert.strictEqual(mixedGate.status, 0, mixedGate.stderr);
+        assert.strictEqual(git('show', `${targetSha}:behavior.txt`), 'fixed in selected target');
+        assert.ok(git('log', targetSha, '--oneline').includes('Selected target fixes behavior'));
+      });
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+    assert.deepStrictEqual(snapshotFiles(outer), before, 'Outer config, index, HEAD, files, objects and refs must remain byte-identical');
+  });
+});
 
 test('documented target gate admits clean matching code and performs no checkout writes', () => {
   withTargetCheckout(({ root, git, targetSha }) => {
@@ -166,6 +251,36 @@ test('documented target gate admits clean matching code and performs no checkout
     assert.deepStrictEqual(fs.readFileSync(indexPath), indexBefore);
     assert.strictEqual(git('status', '--porcelain'), '');
   });
+});
+
+test('documented target gate preserves clean and hidden-edit decisions across macOS locales', () => {
+  const locales = process.platform === 'darwin' ? ['C', 'en_US.UTF-8'] : ['C'];
+  for (const locale of locales) {
+    for (const flag of [null, '--assume-unchanged', '--skip-worktree']) {
+      withTargetCheckout(({ root, git, targetSha }) => {
+        if (flag) {
+          git('update-index', flag, 'behavior.txt');
+          fs.writeFileSync(path.join(root, 'behavior.txt'), 'concealed locale fixture edit\n');
+          assert.strictEqual(git('diff', '--name-only'), '', 'Fixture edit must be hidden from ordinary diff');
+        }
+        const flagsBefore = git('ls-files', '-v');
+        const indexBefore = fs.readFileSync(path.join(root, '.git', 'index'));
+        const contentBefore = fs.readFileSync(path.join(root, 'behavior.txt'));
+        const result = checkDocumentedTarget(root, targetSha, locale);
+        if (flag) {
+          assert.notStrictEqual(result.status, 0, `${locale}: ${flag}`);
+          assert.match(result.stderr, /tracked index flags can conceal worktree changes/);
+        } else {
+          assert.strictEqual(result.status, 0, `${locale}: clean tracked H entry: ${result.stderr}`);
+          assert.ok(result.stdout.includes(targetSha));
+        }
+        assert.strictEqual(git('rev-parse', 'HEAD'), targetSha);
+        assert.strictEqual(git('ls-files', '-v'), flagsBefore);
+        assert.deepStrictEqual(fs.readFileSync(path.join(root, '.git', 'index')), indexBefore);
+        assert.deepStrictEqual(fs.readFileSync(path.join(root, 'behavior.txt')), contentBefore);
+      });
+    }
+  }
 });
 
 test('documented target gate rejects a clean wrong branch in the same canonical repository', () => {
@@ -247,7 +362,7 @@ test('documented target evidence ignores replacement objects and rejects their s
     const windowsBash = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe');
     const bash = process.platform === 'win32' && fs.existsSync(windowsBash) ? windowsBash : 'bash';
     const fallback = spawnSync(bash, ['-c', blob[1].replace('<path>', 'behavior.txt')], {
-      cwd: root, encoding: 'utf8', timeout: 10000, env: { ...process.env, TARGET_SHA: targetSha }
+      cwd: root, encoding: 'utf8', timeout: 10000, env: fixtureGitEnvironment(root, { TARGET_SHA: targetSha })
     });
     assert.ifError(fallback.error);
     assert.strictEqual(fallback.status, 0, fallback.stderr);
@@ -268,7 +383,7 @@ test('documented history and ancestry checks keep later fixes outside pinned tar
     assert.ok(history && membership, 'Expected executable revision-bound history and membership examples');
     const windowsBash = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe');
     const bash = process.platform === 'win32' && fs.existsSync(windowsBash) ? windowsBash : 'bash';
-    const options = { cwd: root, encoding: 'utf8', timeout: 10000, env: { ...process.env, TARGET_SHA: targetSha } };
+    const options = { cwd: root, encoding: 'utf8', timeout: 10000, env: fixtureGitEnvironment(root, { TARGET_SHA: targetSha }) };
     const log = spawnSync(bash, ['-c', history[0]
       .replace('<distinctive error text or identifier>', 'later-only fix').replace('<path>', 'behavior.txt')], options);
     assert.ifError(log.error);
