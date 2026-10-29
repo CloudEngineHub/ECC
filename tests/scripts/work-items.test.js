@@ -132,6 +132,35 @@ async function run() {
       assert.ok(/not found/i.test(missing.stderr), 'reports not found');
     });
 
+    await test('claim rejects unadmitted needs-review, blocked, hold, and unowned running items', async () => {
+      const statuses = ['needs-review', 'blocked', 'hold', 'running'];
+      const setup = await createStateStore({ dbPath });
+      try {
+        for (const status of statuses) {
+          setup.upsertWorkItem({ id: `wi-gate-${status}`, source: 'manual', title: `Gate ${status}`, status, owner: null, metadata: {} });
+        }
+      } finally { setup.close(); }
+      for (const status of statuses) {
+        const result = runClaim(dbPath, [`wi-gate-${status}`, '--owner', 'gate-worker', '--as', 'agent']);
+        assert.notStrictEqual(result.status, 0, `${status} must not be claimable`);
+        assert.match(result.stderr, /not READY/i);
+        const store = await createStateStore({ dbPath });
+        try { assert.strictEqual(store.getWorkItemById(`wi-gate-${status}`).status, status); } finally { store.close(); }
+      }
+    });
+
+    await test('claim accepts an explicitly ready item', async () => {
+      const setup = await createStateStore({ dbPath });
+      try { setup.upsertWorkItem({ id: 'wi-explicit-ready', source: 'manual', title: 'Approved', status: 'ready', owner: null, metadata: {} }); }
+      finally { setup.close(); }
+      const result = runClaim(dbPath, ['wi-explicit-ready', '--owner', 'approved-worker', '--as', 'agent']);
+      assert.strictEqual(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout);
+      assert.strictEqual(payload.claimed, true);
+      assert.strictEqual(payload.item.status, 'running');
+      assert.strictEqual(payload.item.owner, 'approved-worker');
+    });
+
     await test('repeat claim by the same owner is idempotent', async () => {
       const before = await createStateStore({ dbPath });
       let original;
