@@ -7068,6 +7068,13 @@ mod tests {
             false,
             next,
         )?;
+        let previous_run = Utc::now() - ChronoDuration::minutes(2);
+        db.record_scheduled_task_run(original.id, previous_run, next)?;
+        let original = db
+            .get_scheduled_task(original.id)?
+            .context("recorded schedule must exist before update")?;
+        assert_eq!(original.last_run_at, Some(previous_run));
+
         let updated = crate::session::manager::update_scheduled_task_text(
             &db, original.id, "Read ECC native READY items",
         )?;
