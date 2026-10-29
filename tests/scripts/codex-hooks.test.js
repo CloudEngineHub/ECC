@@ -660,7 +660,13 @@ if (
       assert.match(result.stdout, /\[FAIL\] skills missing/);
       assert.match(result.stdout, /\[FAIL\] mcpServers missing/);
       assert.match(result.stdout, /codex plugin list only confirms marketplace registration/);
-      assert.match(result.stdout, /sync-ecc-to-codex\.sh/);
+      assert.match(result.stdout, /codex plugin marketplace upgrade ecc/);
+      assert.match(result.stdout, /codex plugin add ecc@ecc/);
+      assert.match(result.stdout, /same CODEX_HOME/);
+      assert.match(result.stdout, /active plugin root/);
+      assert.match(result.stdout, /--plugin-dir ACTIVE_ROOT/);
+      assert.match(result.stdout, /--version ACTIVE_VERSION/);
+      assert.doesNotMatch(result.stdout, /npm install|sync-ecc-to-codex\.sh/);
     } finally {
       cleanup(homeDir);
     }
