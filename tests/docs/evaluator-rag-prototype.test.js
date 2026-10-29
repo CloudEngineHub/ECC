@@ -567,6 +567,118 @@ test('public feedback goal fidelity keeps automation and the artifact promotion 
   }
 });
 
+test('prepared verifier artifacts preserve shared identity and illustrative decisions', () => {
+  const root = 'prepared-verifier-effect-state/';
+  const scenario = readFixtureJson(`${root}scenario.json`);
+  const trace = readFixtureJson(`${root}trace.json`);
+  const report = readFixtureJson(`${root}report.json`);
+  const verifier = readFixtureJson(`${root}verifier-result.json`);
+  const playbook = read(`examples/evaluator-rag-prototype/${root}candidate-playbook.md`);
+
+  assert.strictEqual(scenario.scenario_id, 'prepared-verifier-effect-state');
+  assert.strictEqual(scenario.mode, 'read_only_prototype');
+  for (const artifact of [trace, report, verifier]) {
+    assert.strictEqual(artifact.scenario_id, scenario.scenario_id);
+    assert.strictEqual(artifact.run_id, 'illustrative-verifier-effect-state');
+    assert.strictEqual(artifact.read_only, true);
+  }
+  assert.strictEqual(trace.illustrative, true);
+  assert.strictEqual(report.result, 'illustrative_expected_result');
+  assert.strictEqual(verifier.evaluation_status, 'illustrative_expected_decisions_not_executed_external_checks');
+  const acceptedId = 'correct-read-preserve-effect';
+  const accepted = verifier.candidates.find(candidate => candidate.candidate_id === acceptedId);
+  const rejected = verifier.candidates.find(candidate => candidate.candidate_id === 'reapply-after-verifier-error');
+  assert.strictEqual(accepted.decision, 'accepted');
+  assert.strictEqual(rejected.decision, 'rejected');
+  assert.strictEqual(verifier.promoted_candidate_id, acceptedId);
+  assert.strictEqual(report.recommended_next_action.candidate_id, acceptedId);
+  assert.ok(trace.events.some(event => event.promoted_candidate_id === acceptedId));
+  assert.ok(playbook.includes(`Candidate id: \`${acceptedId}\``));
+  assert.ok(playbook.includes('This synthetic, read-only example records expected rubric decisions.'));
+  assert.ok(accepted.rollback.includes('must not undo OP_A'));
+  assert.ok(rejected.rollback.includes('Reject this candidate'));
+});
+
+test('prepared verifier report scores cover the rubric without claiming external verification', () => {
+  const root = 'prepared-verifier-effect-state/';
+  const scenario = readFixtureJson(`${root}scenario.json`);
+  const report = readFixtureJson(`${root}report.json`);
+  const trace = readFixtureJson(`${root}trace.json`);
+  const verifier = readFixtureJson(`${root}verifier-result.json`);
+
+  assert.strictEqual(report.score_basis, 'illustrative_expected_rubric_not_external_validation');
+  assert.deepStrictEqual(report.scores, {
+    accepted_effect_preservation: 1,
+    read_contract_correction: 1,
+    unknown_outcome_reconciliation: 1,
+    preflight_dispatch_safety: 1,
+    mechanism_attribution: 1
+  });
+  assert.deepStrictEqual(report.evidence_coverage, {
+    illustrative_acceptance_gates: scenario.acceptance_gates.length,
+    total_acceptance_gates: scenario.acceptance_gates.length,
+    source_reported_mechanisms: scenario.inputs.mechanism_controls.length,
+    executed_external_checks: 0,
+    limits: scenario.evidence_limits
+  });
+  assert.strictEqual(Object.keys(report.scores).length, scenario.acceptance_gates.length);
+  const verification = trace.events.find(event => event.phase === 'verification').summary;
+  const accepted = verifier.candidates.find(candidate => candidate.decision === 'accepted');
+  for (const [traceClaim, verifierClaim] of [
+    ['OP_A accepted and apply_count=1', 'Preserves OP_A accepted status, original receipt and apply_count=1'],
+    ['correct only the read', 'Corrects the read command without inventing a successful verifier result'],
+    ['hold unknown OP_B', 'Holds unknown OP_B for targeted reconciliation before retry'],
+    ['block not-dispatched OP_C on preflight', 'Blocks OP_C before dispatch until preflight succeeds']
+  ]) {
+    assert.ok(verification.includes(traceClaim), `Missing trace claim: ${traceClaim}`);
+    assert.ok(accepted.reasons.includes(verifierClaim), `Missing verifier claim: ${verifierClaim}`);
+  }
+  assert.ok(accepted.reasons.includes('Keeps each source-reported mechanism and its evidence limits separate'));
+  const findings = report.findings.map(finding => finding.summary).join('\n');
+  const stateFinding = report.findings.find(finding => finding.id === 'two-state-axes');
+  assert.ok(stateFinding.summary.includes('An accepted effect and verifier_error can coexist'));
+  assert.ok(stateFinding.summary.includes('verifier failure does not authorize replay or rollback'));
+  assert.ok(findings.includes('distinct evidence'));
+});
+
+test('prepared verifier distinguishes accepted, unknown and not-dispatched operations', () => {
+  const scenario = readFixtureJson('prepared-verifier-effect-state/scenario.json');
+  const playbook = read('examples/evaluator-rag-prototype/prepared-verifier-effect-state/candidate-playbook.md');
+  const { effect, verification, unknown_control, preflight_control } = scenario.inputs;
+
+  assert.deepStrictEqual(effect, {
+    operation_id: 'OP_A', status: 'accepted', receipt: 'synthetic-receipt-A', apply_count: 1
+  });
+  assert.strictEqual(verification.status, 'verifier_error');
+  assert.deepStrictEqual(verification.required_columns, ['pid', 'comm']);
+  assert.deepStrictEqual(verification.prepared_argv, ['docker', 'top', 'example-container', '-eo', 'comm']);
+  assert.deepStrictEqual(verification.corrected_read_argv, ['docker', 'top', 'example-container', '-eo', 'pid,comm']);
+  assert.deepStrictEqual(unknown_control, { operation_id: 'OP_B', status: 'unknown', receipt: null });
+  assert.strictEqual(preflight_control.operation_id, 'OP_C');
+  assert.strictEqual(preflight_control.status, 'not_dispatched');
+  for (const blocked of [
+    'replaying an accepted effect because its verifier failed',
+    'automatically rolling back solely because of verifier error',
+    'treating unknown as failed and automatically resending'
+  ]) {
+    assert.ok(scenario.forbidden_actions.includes(blocked), `Missing effect-state rule: ${blocked}`);
+  }
+  const rows = playbook.split('\n').map(line => line.split('|').map(cell => cell.trim()));
+  for (const [operationId, state, actions] of [
+    ['OP_A', 'Accepted', ['Correct only the read', 'retain accepted identity and receipt']],
+    ['OP_B', 'Unknown', ['Targeted reconciliation', 'no automatic resend']],
+    ['OP_C', 'Not dispatched', ['Fix and recheck the prepared command', 'before dependent action']]
+  ]) {
+    const row = rows.find(cells => cells[1] === operationId);
+    assert.ok(row, `Missing playbook operation: ${operationId}`);
+    assert.strictEqual(row[2].split(',')[0].trim(), state, `Wrong playbook state: ${operationId}`);
+    for (const action of actions) {
+      assert.ok(row[4].includes(action), `Missing playbook action for ${operationId}: ${action}`);
+    }
+  }
+  assert.ok(playbook.includes('Do not repeat load/recreate or initiate rollback merely to make a verifier green.'));
+});
+
 if (failed > 0) {
   console.log(`\nFailed: ${failed}`);
   process.exit(1);
