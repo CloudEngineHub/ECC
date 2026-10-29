@@ -7,8 +7,11 @@ const { normalizeAgentTools } = require('./lib/agent-tools');
 
 const TOOL_NAME_MAP = new Map([
   ['Read', 'read_file'],
+  ['ReadFile', 'read_file'],
+  ['NotebookRead', 'read_file'],
   ['Write', 'write_file'],
   ['Edit', 'replace'],
+  ['MultiEdit', 'replace'],
   ['Bash', 'run_shell_command'],
   ['Grep', 'grep_search'],
   ['Glob', 'glob'],
@@ -33,7 +36,17 @@ function parseArgs(argv) {
     return { help: true };
   }
 
-  const positional = argv.filter(arg => !arg.startsWith('-'));
+  const positional = [];
+  for (const arg of argv) {
+    if (arg.startsWith('-')) {
+      // Reject rather than ignore. This script rewrites files in place, so
+      // silently discarding an unrecognized flag would let `--dry-run` — or any
+      // mistyped option — modify every installed agent and still exit 0.
+      throw new Error(`Unknown option: ${arg}`);
+    }
+    positional.push(arg);
+  }
+
   if (positional.length > 1) {
     throw new Error('Expected at most one agents directory argument');
   }
@@ -85,22 +98,47 @@ function formatToolLine(tools) {
 }
 
 function adaptFrontmatter(text) {
-  const match = text.match(/^---\n([\s\S]*?)\n---(\n|$)/);
+  // Normalize CRLF first. Matching only LF would silently skip a Windows-saved
+  // agent and report it as already compatible while `tools: Read` and
+  // `color: ...` stayed in place. The original ending style is restored below.
+  const usesCrlf = text.includes('\r\n');
+  const source = usesCrlf ? text.replace(/\r\n/g, '\n') : text;
+
+  const match = source.match(/^---\n([\s\S]*?)\n---(\n|$)/);
   if (!match) {
     return { text, changed: false };
   }
 
   let changed = false;
   const updatedLines = [];
+  const lines = match[1].split('\n');
 
-  for (const line of match[1].split('\n')) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     if (/^\s*color\s*:/.test(line)) {
       changed = true;
       continue;
     }
 
-    const tools = parseToolList(line);
-    if (tools) {
+    let tools = parseToolList(line);
+    if (tools !== null && tools.length === 0 && /^\s*tools\s*:\s*$/.test(line)) {
+      const sequenceItems = [];
+      let lookahead = index;
+      while (lookahead + 1 < lines.length && /^(?:\s*#|\s*$|(?:\s*-\s+.*))/.test(lines[lookahead + 1])) {
+        lookahead += 1;
+        const itemMatch = lines[lookahead].match(/^\s*-\s+(.*)$/);
+        if (itemMatch) {
+          sequenceItems.push(itemMatch[1]);
+        }
+      }
+      if (sequenceItems.length > 0) {
+        index = lookahead;
+        changed = true;
+        tools = normalizeAgentTools(sequenceItems);
+      }
+    }
+
+    if (tools && tools.length > 0) {
       const adaptedTools = [];
       const seen = new Set();
 
@@ -127,8 +165,10 @@ function adaptFrontmatter(text) {
     return { text, changed: false };
   }
 
+  const adapted = `---\n${updatedLines.join('\n')}\n---${match[2]}${source.slice(match[0].length)}`;
+
   return {
-    text: `---\n${updatedLines.join('\n')}\n---${match[2]}${text.slice(match[0].length)}`,
+    text: usesCrlf ? adapted.replace(/\n/g, '\r\n') : adapted,
     changed: true,
   };
 }
@@ -139,7 +179,8 @@ function adaptAgents(dirPath) {
   let updated = 0;
   let unchanged = 0;
 
-  for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+  const prepared = [];
+  for (const entry of fs.readdirSync(dirPath, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     if (!entry.isFile() || !entry.name.endsWith('.md')) {
       continue;
     }
@@ -147,7 +188,10 @@ function adaptAgents(dirPath) {
     const filePath = path.join(dirPath, entry.name);
     const original = fs.readFileSync(filePath, 'utf8');
     const adapted = adaptFrontmatter(original);
+    prepared.push({ filePath, adapted });
+  }
 
+  for (const { filePath, adapted } of prepared) {
     if (adapted.changed) {
       fs.writeFileSync(filePath, adapted.text);
       updated += 1;
@@ -170,9 +214,13 @@ function main() {
   console.log(`Updated ${result.updated} agent file(s); ${result.unchanged} already compatible`);
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error.message);
-  process.exit(1);
+if (require.main === module) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
 }
+
+module.exports = { adaptFrontmatter };
