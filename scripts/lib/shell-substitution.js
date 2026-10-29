@@ -105,14 +105,31 @@ function parenDelta(ch) {
   return 0;
 }
 
+// `$'...'` (ANSI-C quoting) opens only on an unescaped `$`: an odd run of
+// backslashes before it makes the `$` literal and the quote a plain one.
+function opensAnsiC(source, i) {
+  if (source[i - 1] !== '$') return false;
+  let backslashes = 0;
+  while (source[i - 2 - backslashes] === '\\') backslashes += 1;
+  return backslashes % 2 === 0;
+}
+
+// Backslash escapes apply outside single quotes and inside `$'...'`.
+function escapesActive(quotes) {
+  return !quotes.inSingle || quotes.ansiC;
+}
+
 /**
- * Toggle quote state for a quote character at the current position.
- * Returns true when `ch` opened or closed a quote. Callers consume escapes
- * first, so a quote after a backslash here still closes (`'C:\'`, `"C:\\"`).
+ * Toggle quote state for the quote character at `source[i]`.
+ * Returns true when it opened or closed a quote. Callers consume escapes
+ * first, so a quote after a backslash here still closes (`'C:\'`, `"C:\\"`),
+ * while `\'` inside `$'...'` is consumed before it can close the string.
  */
-function toggleQuote(ch, quotes) {
+function toggleQuote(source, i, quotes) {
+  const ch = source[i];
   if (ch === "'" && !quotes.inDouble) {
     quotes.inSingle = !quotes.inSingle;
+    quotes.ansiC = quotes.inSingle && opensAnsiC(source, i);
     return true;
   }
   if (ch === '"' && !quotes.inSingle) {
@@ -127,16 +144,16 @@ function toggleQuote(ch, quotes) {
  * is at `start`, honoring quotes and escapes inside the span.
  */
 function findParenSpanEnd(source, start) {
-  const quotes = { inSingle: false, inDouble: false };
+  const quotes = { inSingle: false, inDouble: false, ansiC: false };
   let depth = 1;
   let i = start;
   while (i < source.length && depth > 0) {
     const inner = source[i];
-    if (inner === '\\' && !quotes.inSingle) {
+    if (inner === '\\' && escapesActive(quotes)) {
       i += 2;
       continue;
     }
-    if (!toggleQuote(inner, quotes) && !quotes.inSingle && !quotes.inDouble) {
+    if (!toggleQuote(source, i, quotes) && !quotes.inSingle && !quotes.inDouble) {
       depth += parenDelta(inner);
     }
     i += 1;
@@ -167,8 +184,8 @@ function findBacktickEnd(source, start) {
  */
 function skipOuterSpan(source, i, quotes) {
   const ch = source[i];
-  if (ch === '\\' && !quotes.inSingle) return i + 1;
-  if (toggleQuote(ch, quotes)) return i;
+  if (ch === '\\' && escapesActive(quotes)) return i + 1;
+  if (toggleQuote(source, i, quotes)) return i;
   if (quotes.inSingle || quotes.inDouble) return i;
   if (ch === '$' && source[i + 1] === '(') return findParenSpanEnd(source, i + 2) - 1;
   if (ch === '`') return findBacktickEnd(source, i + 1);
@@ -180,20 +197,20 @@ function skipOuterSpan(source, i, quotes) {
  * the body text and the index of the closing paren (or where input ran out).
  */
 function readSubshellBody(source, start) {
-  const quotes = { inSingle: false, inDouble: false };
+  const quotes = { inSingle: false, inDouble: false, ansiC: false };
   let depth = 1;
   let body = '';
   let i = start;
   while (i < source.length && depth > 0) {
     const inner = source[i];
-    if (inner === '\\' && !quotes.inSingle) {
+    if (inner === '\\' && escapesActive(quotes)) {
       // Keep the escape and its operand together; a trailing backslash at the
       // end of an unterminated span is appended once and the scan stops.
       body += source.slice(i, i + 2);
       i = Math.min(i + 2, source.length);
       continue;
     }
-    if (!toggleQuote(inner, quotes) && !quotes.inSingle && !quotes.inDouble) {
+    if (!toggleQuote(source, i, quotes) && !quotes.inSingle && !quotes.inDouble) {
       depth += parenDelta(inner);
       if (depth === 0) break;
     }
@@ -223,7 +240,7 @@ function readSubshellBody(source, start) {
 function extractSubshellGroups(input) {
   const source = String(input || '');
   const groups = [];
-  const quotes = { inSingle: false, inDouble: false };
+  const quotes = { inSingle: false, inDouble: false, ansiC: false };
 
   for (let i = 0; i < source.length; i++) {
     const skipped = skipOuterSpan(source, i, quotes);
@@ -268,19 +285,19 @@ function opensBraceGroup(source, i) {
  * the body text and the index of the closing brace (or where input ran out).
  */
 function readBraceBody(source, start) {
-  const quotes = { inSingle: false, inDouble: false };
+  const quotes = { inSingle: false, inDouble: false, ansiC: false };
   let depth = 1;
   let body = '';
   let i = start;
   while (i < source.length && depth > 0) {
     const inner = source[i];
     const prev = source[i - 1];
-    if (inner === '\\' && !quotes.inSingle) {
+    if (inner === '\\' && escapesActive(quotes)) {
       body += source.slice(i, i + 2);
       i = Math.min(i + 2, source.length);
       continue;
     }
-    if (toggleQuote(inner, quotes) || quotes.inSingle || quotes.inDouble) {
+    if (toggleQuote(source, i, quotes) || quotes.inSingle || quotes.inDouble) {
       body += inner;
       i += 1;
       continue;
@@ -330,7 +347,7 @@ function readBraceBody(source, start) {
 function extractBraceGroups(input) {
   const source = String(input || '');
   const groups = [];
-  const quotes = { inSingle: false, inDouble: false };
+  const quotes = { inSingle: false, inDouble: false, ansiC: false };
 
   for (let i = 0; i < source.length; i++) {
     const skipped = skipOuterSpan(source, i, quotes);
