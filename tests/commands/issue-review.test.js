@@ -111,6 +111,176 @@ test('verification binds code evidence to the canonical issue repository', () =>
   assert.match(verify, /checkout root, HEAD SHA/);
 });
 
+function withTargetCheckout(fn) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-issue-review-target-'));
+  function git(...args) {
+    const result = spawnSync('git', ['-C', root, ...args], {
+      encoding: 'utf8', timeout: 10000,
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' }
+    });
+    assert.ifError(result.error);
+    assert.strictEqual(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  }
+  try {
+    git('init');
+    git('config', 'user.name', 'Issue Review Fixture');
+    git('config', 'user.email', 'issue-review@example.invalid');
+    git('config', 'commit.gpgsign', 'false');
+    git('config', 'core.hooksPath', path.join(root, '.git', 'disabled-hooks'));
+    git('remote', 'add', 'origin', 'https://github.com/selected-owner/selected-repo.git');
+    fs.writeFileSync(path.join(root, 'behavior.txt'), 'fixed in selected target\n');
+    git('add', 'behavior.txt');
+    git('commit', '-m', 'Selected target fixes behavior');
+    const targetSha = git('rev-parse', 'HEAD');
+    fn({ root, git, targetSha });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function checkDocumentedTarget(root, targetSha) {
+  const verify = sectionBody(skill, '### Phase 4: VERIFY');
+  const gate = verify.match(/<<'ISSUE_REVIEW_TARGET_GATE'\r?\n([\s\S]*?)\r?\nISSUE_REVIEW_TARGET_GATE/);
+  assert.ok(gate, 'Expected an executable checkout evidence gate in the workflow');
+  const windowsBash = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe');
+  const bash = process.platform === 'win32' && fs.existsSync(windowsBash) ? windowsBash : 'bash';
+  const result = spawnSync(bash, ['-s', '--', root, targetSha], {
+    input: gate[1], encoding: 'utf8', timeout: 10000,
+    // An inherited target must never replace the explicitly selected argument.
+    env: { ...process.env, TARGET_SHA: '0'.repeat(40) }
+  });
+  assert.ifError(result.error);
+  return result;
+}
+
+test('documented target gate admits clean matching code and performs no checkout writes', () => {
+  withTargetCheckout(({ root, git, targetSha }) => {
+    const indexPath = path.join(root, '.git', 'index');
+    const indexBefore = fs.readFileSync(indexPath);
+    const result = checkDocumentedTarget(root, targetSha);
+    assert.strictEqual(result.status, 0, result.stderr);
+    assert.ok(result.stdout.includes(targetSha), result.stdout);
+    assert.strictEqual(fs.readFileSync(path.join(root, 'behavior.txt'), 'utf8'), 'fixed in selected target\n');
+    assert.strictEqual(git('rev-parse', 'HEAD'), targetSha);
+    assert.deepStrictEqual(fs.readFileSync(indexPath), indexBefore);
+    assert.strictEqual(git('status', '--porcelain'), '');
+  });
+});
+
+test('documented target gate rejects a clean wrong branch in the same canonical repository', () => {
+  withTargetCheckout(({ root, git, targetSha }) => {
+    git('checkout', '-b', 'other-branch');
+    fs.writeFileSync(path.join(root, 'behavior.txt'), 'different behavior on other branch\n');
+    git('add', 'behavior.txt');
+    git('commit', '-m', 'Unrelated branch changes behavior');
+    const otherSha = git('rev-parse', 'HEAD');
+    assert.strictEqual(git('remote', 'get-url', 'origin'), 'https://github.com/selected-owner/selected-repo.git');
+    assert.strictEqual(git('status', '--porcelain'), '');
+    const result = checkDocumentedTarget(root, targetSha);
+    assert.notStrictEqual(result.status, 0);
+    assert.match(result.stderr, /HEAD does not equal selected TARGET_SHA/);
+    assert.strictEqual(git('rev-parse', 'HEAD'), otherSha);
+    // Read-only fallback proves the selected code without trusting this worktree.
+    assert.strictEqual(git('show', `${targetSha}:behavior.txt`), 'fixed in selected target');
+    assert.strictEqual(fs.readFileSync(path.join(root, 'behavior.txt'), 'utf8'), 'different behavior on other branch\n');
+  });
+});
+
+test('documented target gate rejects dirty tracked worktree and index without altering either', () => {
+  withTargetCheckout(({ root, git, targetSha }) => {
+    for (const staged of [false, true]) {
+      fs.writeFileSync(path.join(root, 'behavior.txt'), 'uncommitted behavior\n');
+      if (staged) git('add', 'behavior.txt');
+      const before = git('status', '--porcelain');
+      const indexBefore = fs.readFileSync(path.join(root, '.git', 'index'));
+      const result = checkDocumentedTarget(root, targetSha);
+      assert.notStrictEqual(result.status, 0);
+      assert.match(result.stderr, /tracked index or worktree is dirty/);
+      assert.strictEqual(git('rev-parse', 'HEAD'), targetSha);
+      assert.strictEqual(git('status', '--porcelain'), before);
+      assert.deepStrictEqual(fs.readFileSync(path.join(root, '.git', 'index')), indexBefore);
+      assert.strictEqual(fs.readFileSync(path.join(root, 'behavior.txt'), 'utf8'), 'uncommitted behavior\n');
+    }
+  });
+});
+
+test('documented target gate rejects index flags that hide tracked worktree changes', () => {
+  for (const flag of ['--assume-unchanged', '--skip-worktree']) {
+    withTargetCheckout(({ root, git, targetSha }) => {
+      git('update-index', flag, 'behavior.txt');
+      fs.writeFileSync(path.join(root, 'behavior.txt'), 'hidden uncommitted behavior\n');
+      assert.strictEqual(git('diff', '--name-only'), '', 'Fixture must demonstrate edits hidden from git diff');
+      const flagsBefore = git('ls-files', '-v');
+      const indexBefore = fs.readFileSync(path.join(root, '.git', 'index'));
+      const result = checkDocumentedTarget(root, targetSha);
+      assert.notStrictEqual(result.status, 0, flag);
+      assert.match(result.stderr, /tracked index flags can conceal worktree changes/);
+      assert.strictEqual(git('ls-files', '-v'), flagsBefore);
+      assert.deepStrictEqual(fs.readFileSync(path.join(root, '.git', 'index')), indexBefore);
+      assert.strictEqual(fs.readFileSync(path.join(root, 'behavior.txt'), 'utf8'), 'hidden uncommitted behavior\n');
+      assert.strictEqual(git('show', `${targetSha}:behavior.txt`), 'fixed in selected target');
+    });
+  }
+});
+
+test('documented target evidence ignores replacement objects and rejects their substituted worktree', () => {
+  withTargetCheckout(({ root, git, targetSha }) => {
+    fs.writeFileSync(path.join(root, 'behavior.txt'), 'replacement content\n');
+    git('add', 'behavior.txt');
+    git('commit', '-m', 'Local replacement content');
+    const replacementSha = git('rev-parse', 'HEAD');
+    git('replace', targetSha, replacementSha);
+    git('checkout', '--detach', targetSha);
+    assert.strictEqual(git('rev-parse', 'HEAD'), targetSha);
+    assert.strictEqual(git('status', '--porcelain'), '');
+    assert.strictEqual(git('show', `${targetSha}:behavior.txt`), 'replacement content');
+    const indexBefore = fs.readFileSync(path.join(root, '.git', 'index'));
+    const result = checkDocumentedTarget(root, targetSha);
+    assert.notStrictEqual(result.status, 0);
+    assert.match(result.stderr, /tracked index or worktree is dirty/);
+    assert.deepStrictEqual(fs.readFileSync(path.join(root, '.git', 'index')), indexBefore);
+    assert.strictEqual(git('replace', '-l'), targetSha, 'Read-only gate must preserve replacement refs');
+    const verify = sectionBody(skill, '### Phase 4: VERIFY');
+    const blob = verify.match(/`(git --no-replace-objects show [^`]+)`/);
+    assert.ok(blob, 'Expected canonical blob fallback to disable replacement objects');
+    const windowsBash = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe');
+    const bash = process.platform === 'win32' && fs.existsSync(windowsBash) ? windowsBash : 'bash';
+    const fallback = spawnSync(bash, ['-c', blob[1].replace('<path>', 'behavior.txt')], {
+      cwd: root, encoding: 'utf8', timeout: 10000, env: { ...process.env, TARGET_SHA: targetSha }
+    });
+    assert.ifError(fallback.error);
+    assert.strictEqual(fallback.status, 0, fallback.stderr);
+    assert.strictEqual(fallback.stdout, 'fixed in selected target\n');
+    assert.strictEqual(fs.readFileSync(path.join(root, 'behavior.txt'), 'utf8'), 'replacement content\n');
+  });
+});
+
+test('documented history and ancestry checks keep later fixes outside pinned target evidence', () => {
+  withTargetCheckout(({ root, git, targetSha }) => {
+    fs.writeFileSync(path.join(root, 'behavior.txt'), 'later-only fix\n');
+    git('add', 'behavior.txt');
+    git('commit', '-m', 'Later merged fix outside selected target');
+    const laterSha = git('rev-parse', 'HEAD');
+    const verify = sectionBody(skill, '### Phase 4: VERIFY');
+    const history = verify.match(/^git --no-replace-objects log [^\n]+/m);
+    const membership = verify.match(/`(git --no-replace-objects merge-base --is-ancestor [^`]+)`/);
+    assert.ok(history && membership, 'Expected executable revision-bound history and membership examples');
+    const windowsBash = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe');
+    const bash = process.platform === 'win32' && fs.existsSync(windowsBash) ? windowsBash : 'bash';
+    const options = { cwd: root, encoding: 'utf8', timeout: 10000, env: { ...process.env, TARGET_SHA: targetSha } };
+    const log = spawnSync(bash, ['-c', history[0]
+      .replace('<distinctive error text or identifier>', 'later-only fix').replace('<path>', 'behavior.txt')], options);
+    assert.ifError(log.error);
+    assert.strictEqual(log.status, 0, log.stderr);
+    assert.strictEqual(log.stdout, '', 'Later fix must be absent from selected target history');
+    const ancestry = spawnSync(bash, ['-c', membership[1].replace('<fix-SHA>', laterSha)], options);
+    assert.ifError(ancestry.error);
+    assert.strictEqual(ancestry.status, 1, ancestry.stderr);
+    assert.strictEqual(git('show', `${targetSha}:behavior.txt`), 'fixed in selected target');
+  });
+});
+
 test('SKILL.md treats issue content as untrusted and never runs it', () => {
   const rule = sectionBody(skill, '## Untrusted Content Rule');
   assert.ok(rule.length > 0, 'Expected an "Untrusted Content Rule" section');
