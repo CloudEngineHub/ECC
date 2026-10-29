@@ -127,6 +127,9 @@ Current corpus:
   observed gaps from unavailable research, and requires evidence before a new
   background component is proposed. Decisions are illustrative, not executed
   connector checks.
+- `public-feedback-goal-fidelity`: compares a shortened draft with the chosen
+  outcome and input/process/result chain, preserving verification limits and
+  separating optional alternatives. Decisions are illustrative.
 
 ## ECC Tools Mapping
 
