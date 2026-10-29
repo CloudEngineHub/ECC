@@ -42,8 +42,9 @@ function selectClaimTarget(store, { id } = {}) {
     }
     return item;
   }
-  const { items } = store.listWorkItems({ limit: 100 });
-  return items.filter(item => !item.owner && isOpenStatus(item.status)).sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority))[0] || null;
+  // The native SQL query filters all eligible items before choosing the
+  // highest-priority claim; a newer 100-item slice can hide older READY work.
+  return store.getNextClaimableWorkItem();
 }
 
 /**
