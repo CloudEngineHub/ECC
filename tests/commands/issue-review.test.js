@@ -118,7 +118,11 @@ function fixtureGitEnvironment(root, extra = {}) {
   const config = path.join(home, 'gitconfig');
   const templates = path.join(home, 'templates');
   fs.mkdirSync(templates, { recursive: true });
-  if (!fs.existsSync(config)) fs.writeFileSync(config, '');
+  try {
+    fs.writeFileSync(config, '', { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+  }
   return {
     ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'),
     GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_SYSTEM: config, GIT_CONFIG_GLOBAL: config,
@@ -426,49 +430,121 @@ test('every GitHub write binds the fetched repository instead of the ambient che
   const commands = [...publish.matchAll(/`(gh issue (?:comment|edit) [^`]+)`/g)].map(match => match[1]);
   assert.strictEqual(commands.length, 2, 'Expected comment and label publication examples');
   for (const command of commands) {
-    assert.ok(command.includes('--repo <HOST/OWNER/REPO>'), command);
+    assert.ok(command.includes("--repo '<HOST/OWNER/REPO>'"), command);
   }
   assert.ok(publish.includes('recheck the fetched issue URL'), 'Expected a fresh identity check before publication');
 });
 
-test('documented cross-repository writes replay through gh without selecting the current checkout', () => {
-  if (process.platform === 'win32') {
-    console.log('    SKIP executable gh stub uses a POSIX shebang; repository-binding assertions still run');
-    return;
+function shellLiteralContent(value) {
+  return value.replace(/'/g, "'\\''");
+}
+
+const shellPayload = "author's $(touch issue-review-dollar-marker) `touch issue-review-backtick-marker` with spaces";
+
+function assertNoPayloadMarkers(root) {
+  for (const name of ['issue-review-dollar-marker', 'issue-review-backtick-marker']) {
+    assert.ok(!fs.existsSync(path.join(root, name)), `Shell executed issue-derived data: ${name}`);
   }
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-issue-review-gh-'));
-  const bin = path.join(temporary, 'bin');
-  const ambient = path.join(temporary, 'ambient-checkout');
-  fs.mkdirSync(bin);
-  fs.mkdirSync(ambient);
+}
+
+function replayDocumentedShell(root, command, extraEnv = {}) {
+  const env = fixtureGitEnvironment(root, {
+    GH_HOST: 'other.example.test', ISSUE_REVIEW_NODE: process.execPath.replace(/\\/g, '/'), ...extraEnv
+  });
+  const stub = path.join(env.HOME, 'gh-replay.cjs');
+  fs.writeFileSync(stub, [
+    'const args = process.argv.slice(2);',
+    'const at = args.indexOf("--repo");',
+    'process.stdout.write(JSON.stringify({args, repo: at < 0 ? "ambient-owner/ambient-repo" : args[at + 1]}));',
+    ''
+  ].join('\n'));
+  env.ISSUE_REVIEW_GH_STUB = stub.replace(/\\/g, '/');
+  const windowsBash = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe');
+  const bash = process.platform === 'darwin' ? '/bin/bash'
+    : process.platform === 'win32' && fs.existsSync(windowsBash) ? windowsBash : 'bash';
+  const result = spawnSync(bash, ['-c', 'gh() { "$ISSUE_REVIEW_NODE" "$ISSUE_REVIEW_GH_STUB" "$@"; }\n' + command], {
+    cwd: root, encoding: 'utf8', timeout: 10000, env
+  });
+  assert.ifError(result.error);
+  return result;
+}
+
+function expandReviewCommand(command, values) {
+  return command.replace(/<[^>]+>/g, placeholder => {
+    assert.ok(Object.hasOwn(values, placeholder), `Missing fixture value for ${placeholder}`);
+    return shellLiteralContent(values[placeholder]);
+  });
+}
+
+test('documented cross-repository writes replay faithful shell quoting and literal file/label data', () => {
+  const ambient = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-issue-review-gh-'));
   try {
-    fs.writeFileSync(path.join(bin, 'gh'), [
-      '#!/usr/bin/env node',
-      'const args = process.argv.slice(2);',
-      'const at = args.indexOf("--repo");',
-      'process.stdout.write(JSON.stringify({args, repo: at < 0 ? "ambient-owner/ambient-repo" : args[at + 1]}));',
-      ''
-    ].join('\n'), { mode: 0o755 });
     const publish = sectionBody(skill, '### Phase 8: PUBLISH (opt-in only)');
     const commands = [...publish.matchAll(/`(gh issue (?:comment|edit) [^`]+)`/g)].map(match => match[1]);
     assert.strictEqual(commands.length, 2);
+    const draftFile = `draft ${shellPayload}.md`;
+    fs.writeFileSync(path.join(ambient, draftFile), 'Fixture draft body\n');
     for (const command of commands) {
-      const expanded = command.replace('<NUMBER>', '17').replace('<HOST/OWNER/REPO>', 'github.com/other-owner/other-repo')
-        .replace('<file>', 'draft.md').replace('<labels>', 'bug');
-      const [executable, ...args] = expanded.split(/\s+/);
-      const result = spawnSync(executable, args, {
-        cwd: ambient, encoding: 'utf8', timeout: 5000,
-        env: { ...process.env, GH_HOST: 'other.example.test', PATH: `${bin}${path.delimiter}${process.env.PATH || ''}` }
+      const expanded = expandReviewCommand(command, {
+        '<NUMBER>': '17', '<HOST/OWNER/REPO>': 'github.com/other-owner/other-repo',
+        '<file>': draftFile, '<labels>': shellPayload
       });
-      assert.ifError(result.error);
+      const result = replayDocumentedShell(ambient, expanded);
+      assertNoPayloadMarkers(ambient);
       assert.strictEqual(result.status, 0, result.stderr);
       const invocation = JSON.parse(result.stdout);
       assert.strictEqual(invocation.repo, 'github.com/other-owner/other-repo', expanded);
       assert.strictEqual(invocation.args[2], '17');
+      const flag = invocation.args[1] === 'comment' ? '--body-file' : '--add-label';
+      assert.strictEqual(invocation.args[invocation.args.indexOf(flag) + 1], flag === '--body-file' ? draftFile : shellPayload);
     }
   } finally {
-    fs.rmSync(temporary, { recursive: true, force: true });
+    fs.rmSync(ambient, { recursive: true, force: true });
   }
+});
+
+test('documented PR and issue searches pass shell payloads as one literal keyword argument', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-issue-review-search-'));
+  try {
+    const commands = [...skill.matchAll(/^gh (?:pr|issue) list [^\n]+/gm)].map(match => match[0]);
+    assert.strictEqual(commands.length, 2);
+    for (const command of commands) {
+      const result = replayDocumentedShell(root, expandReviewCommand(command, {
+        '<HOST/OWNER/REPO>': 'github.com/selected-owner/selected-repo', '<keywords>': shellPayload
+      }));
+      assertNoPayloadMarkers(root);
+      assert.strictEqual(result.status, 0, result.stderr);
+      const invocation = JSON.parse(result.stdout);
+      assert.strictEqual(invocation.repo, 'github.com/selected-owner/selected-repo');
+      assert.strictEqual(invocation.args[invocation.args.indexOf('--search') + 1], shellPayload);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('documented Git history and exact blobs preserve literal issue text and paths through Bash', () => {
+  withTargetCheckout(({ root, git }) => {
+    const file = `behavior ${shellPayload}.txt`;
+    fs.writeFileSync(path.join(root, file), shellPayload + '\n');
+    git('add', '--', file);
+    git('commit', '-m', 'Literal issue payload fixture');
+    const targetSha = git('rev-parse', 'HEAD');
+    const verify = sectionBody(skill, '### Phase 4: VERIFY');
+    const history = verify.match(/^git --no-replace-objects log [^\n]+/m);
+    const blob = verify.match(/`(git --no-replace-objects show [^`]+)`/);
+    assert.ok(history && blob);
+    const values = { '<distinctive error text or identifier>': shellPayload, '<path>': file };
+    const log = replayDocumentedShell(root, expandReviewCommand(history[0], values), { TARGET_SHA: targetSha });
+    assertNoPayloadMarkers(root);
+    assert.strictEqual(log.status, 0, log.stderr);
+    assert.ok(log.stdout.includes(targetSha.slice(0, 7)), 'Literal pickaxe search must find the payload commit');
+    const content = replayDocumentedShell(root, expandReviewCommand(blob[1], values), { TARGET_SHA: targetSha });
+    assertNoPayloadMarkers(root);
+    assert.strictEqual(content.status, 0, content.stderr);
+    assert.strictEqual(content.stdout, shellPayload + '\n');
+    assert.strictEqual(git('status', '--porcelain'), '');
+  });
 });
 
 test('SKILL.md redirects pull request numbers to /code-review', () => {
