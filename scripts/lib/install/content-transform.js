@@ -10,10 +10,11 @@ function rewriteCopilotWorkflowPaths(content, sourceRelativePath) {
   if (!/\.md$/i.test(sourceRelativePath)) return content;
   // Commands run from the installed project root. Rewrite only the supported
   // helper entrypoint, leaving unrelated project scripts and URLs untouched.
+  const isTddWorkflow = /(?:^|\/)skills\/tdd-workflow\/SKILL\.md$/i.test(sourceRelativePath.replace(/\\/g, '/'));
   let projectedDetector = false;
   let projected = content.replace(/(^[ \t]*```bash\r?\n)([\s\S]*?)(^[ \t]*```)/gm,
     (block, opening, body, closing) => {
-      if (!/^\s*ECC_ROOT=/m.test(body)
+      if (!isTddWorkflow || !/^\s*ECC_ROOT=/m.test(body)
         || !/^\s*node "\$ECC_ROOT\/scripts\/setup-package-manager\.js" --detect\s*$/m.test(body)) {
         return block;
       }

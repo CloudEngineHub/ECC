@@ -275,6 +275,19 @@ test('normal installed Copilot TDD command runs from the project with a complete
   }
 });
 
+test('Copilot preserves unrelated workflow shell steps around a detector call', () => {
+  const { transformInstallContent } = require('../../scripts/lib/install/content-transform');
+  const content = [
+    '```bash', 'ECC_ROOT="/custom/tool"', 'printf before',
+    'node "$ECC_ROOT/scripts/setup-package-manager.js" --detect',
+    'printf after', '```', ''
+  ].join('\n');
+  const actual = transformInstallContent({
+    contentTransform: 'copilot-workflow-paths', sourceRelativePath: 'skills/fixture/SKILL.md'
+  }, content);
+  assert.strictEqual(actual, content, 'only the canonical TDD detector block may be replaced');
+});
+
 test('Copilot rewrites Markdown commands while preserving binary skill assets and source bytes', () => {
   const fs = require('fs');
   const os = require('os');
