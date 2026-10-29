@@ -17,8 +17,8 @@ but reports eleven rule warnings: ten files in `rules/common/` and
 `rules/README.md` have no `paths:` frontmatter.
 
 This is intentional Qwen behavior: **extension rules must be conditional**.
-User rules under `~/.qwen/rules/` (or `$QWEN_HOME/rules/` when set) may instead be baseline instructions, loaded
-from the first request. See the [Qwen rules documentation](https://qwenlm.github.io/qwen-code-docs/en/users/features/rules/).
+User rules under `~/.qwen/rules/` (or `$QWEN_HOME/rules/` when set) may instead
+be baseline instructions, loaded from the first request. See the [Qwen rules documentation](https://qwenlm.github.io/qwen-code-docs/en/users/features/rules/).
 Do not add artificial `paths: ["**/*"]` to shared ECC rules just to silence the
 warnings; that changes when they apply and does not preserve baseline semantics.
 `rules/README.md` is installation documentation and should not become a rule.
@@ -28,12 +28,14 @@ If you explicitly want ECC's common policies in every normal Qwen session
 supplement the extension with a user-owned copy of **only** its common rules:
 
 ```bash
+# If QWEN_HOME is set, export it as an absolute path (not a quoted ~/ path).
 # Inspect these policies first: they include TDD, coverage and delegation rules.
 # Stop if the destination exists; review/merge existing files instead of overwriting.
-test ! -e "${QWEN_HOME:-$HOME/.qwen}/rules/ecc/common" && \
+test -d "${QWEN_HOME:-$HOME/.qwen}/extensions/ecc/rules/common" && \
+  test ! -e "${QWEN_HOME:-$HOME/.qwen}/rules/ecc/common" && \
   test ! -L "${QWEN_HOME:-$HOME/.qwen}/rules/ecc/common" && \
   mkdir -p "${QWEN_HOME:-$HOME/.qwen}/rules/ecc" && \
-  cp -R "$HOME/.qwen/extensions/ecc/rules/common" "${QWEN_HOME:-$HOME/.qwen}/rules/ecc/"
+  cp -R "${QWEN_HOME:-$HOME/.qwen}/extensions/ecc/rules/common" "${QWEN_HOME:-$HOME/.qwen}/rules/ecc/"
 ```
 
 For project-only scope, use `<project>/.qwen/rules/ecc/` as the destination;
