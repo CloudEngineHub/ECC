@@ -24,9 +24,7 @@ const MODEL_NAMES = Object.freeze({
 
 function splitFrontmatter(source, label) {
   const raw = String(source || '');
-  const usesCrlf = raw.includes('\r\n');
-  const normalized = usesCrlf ? raw.replace(/\r\n/g, '\n') : raw;
-  const match = normalized.match(/^---\n([\s\S]*?)\n---\n/);
+  const match = raw.match(/^---(\r?\n)([\s\S]*?)\r?\n---(\r?\n)/);
   if (!match) {
     throw new Error(`Cannot adapt Antigravity agent ${label}: missing YAML frontmatter`);
   }
@@ -34,15 +32,16 @@ function splitFrontmatter(source, label) {
   // Keep YAML loading behind the transform boundary. Public help commands load
   // the installer graph without executing a transform, including in hermetic
   // packed-artifact checks where runtime dependencies are intentionally absent.
-  const frontmatter = require('js-yaml').load(match[1]);
+  const frontmatter = require('js-yaml').load(match[2]);
   if (!frontmatter || typeof frontmatter !== 'object' || Array.isArray(frontmatter)) {
     throw new Error(`Cannot adapt Antigravity agent ${label}: frontmatter must be an object`);
   }
 
   return {
     frontmatter,
-    body: normalized.slice(match[0].length),
-    usesCrlf,
+    body: raw.slice(match[0].length),
+    headerEol: match[1],
+    trailingFenceEol: match[3],
   };
 }
 
@@ -53,7 +52,7 @@ function normalizeToolNames(value) {
 }
 
 function adaptAntigravityAgent(source, label = '<unknown>') {
-  const { frontmatter, body, usesCrlf } = splitFrontmatter(source, label);
+  const { frontmatter, body, headerEol, trailingFenceEol } = splitFrontmatter(source, label);
   const { color: _claudeColor, ...supportedFrontmatter } = frontmatter;
   const adapted = { ...supportedFrontmatter };
   if (Object.hasOwn(frontmatter, 'tools')) {
@@ -66,9 +65,9 @@ function adaptAntigravityAgent(source, label = '<unknown>') {
   }
   const serialized = require('js-yaml')
     .dump(adapted, { lineWidth: -1, noRefs: true })
-    .trimEnd();
-  const output = `---\n${serialized}\n---\n${body}`;
-  return usesCrlf ? output.replace(/\n/g, '\r\n') : output;
+    .trimEnd()
+    .replace(/\n/g, headerEol);
+  return `---${headerEol}${serialized}${headerEol}---${trailingFenceEol}${body}`;
 }
 
 module.exports = {

@@ -132,6 +132,13 @@ test('transform preserves CRLF line endings consistently on Windows-saved agents
   assert.ok(adapted.includes('replace_file_content'));
 });
 
+test('transform preserves mixed body line endings verbatim without rewriting body LFs', () => {
+  const mixedBody = '\nFirst LF line\nPasted CRLF line\r\nFinal LF line\n';
+  const source = `---\nname: mixed-agent\ndescription: Mixed body\ntools: Read\ncolor: teal\n---\n${mixedBody}`;
+  const adapted = adaptAntigravityAgent(source, 'agents/mixed-agent.md');
+  assert.ok(adapted.endsWith(`---\n${mixedBody}`), 'Expected mixed body line endings to remain verbatim');
+});
+
 test('transform rejects missing or non-object frontmatter', () => {
   assert.throws(
     () => adaptAntigravityAgent('# no frontmatter\n', 'agents/broken.md'),
