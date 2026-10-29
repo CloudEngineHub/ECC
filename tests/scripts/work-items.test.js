@@ -202,6 +202,40 @@ async function run() {
       assert.deepStrictEqual(JSON.parse(result.stdout).item, original);
     });
 
+    await test('automatic claim finds older READY work beyond 100 newer unready items', async () => {
+      const store = await createStateStore({ dbPath });
+      try {
+        for (let i = 0; i < 105; i++) {
+          store.upsertWorkItem({
+            id: `wi-new-unready-${i}`, source: 'manual', title: 'Unready',
+            status: 'needs-review', priority: 'critical', owner: null,
+            createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z'
+          });
+        }
+        store.upsertWorkItem({
+          id: 'wi-old-critical-ready', source: 'manual', title: 'Old critical READY',
+          status: 'ready', priority: 'critical', owner: null,
+          createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z'
+        });
+        store.upsertWorkItem({
+          id: 'wi-old-low-ready', source: 'manual', title: 'Old low READY',
+          status: 'ready', priority: 'low', owner: null,
+          createdAt: '2025-02-01T00:00:00.000Z', updatedAt: '2025-02-01T00:00:00.000Z'
+        });
+        const newest = store.listWorkItems({ limit: 100 });
+        assert.ok(newest.totalCount > 100);
+        assert.ok(!newest.items.some(item => item.id === 'wi-old-critical-ready'));
+      } finally { store.close(); }
+
+      const first = runClaim(dbPath, ['--owner', 'critical-worker', '--as', 'agent']);
+      assert.strictEqual(first.status, 0, first.stderr);
+      assert.strictEqual(JSON.parse(first.stdout).item.id, 'wi-old-critical-ready');
+
+      const second = runClaim(dbPath, ['--owner', 'low-worker', '--as', 'agent']);
+      assert.strictEqual(second.status, 0, second.stderr);
+      assert.strictEqual(JSON.parse(second.stdout).item.id, 'wi-old-low-ready');
+    });
+
     await test('repeat claim by the same owner is idempotent', async () => {
       const before = await createStateStore({ dbPath });
       let original;
