@@ -45,6 +45,29 @@ async function test(name, fn) {
 }
 
 async function run() {
+  await test('a newly imported issue can be admitted and claimed without losing ownership on resync', ({ store, sync }) => {
+    sync();
+    const id = 'github-example-repo-issue-8';
+    const imported = store.getWorkItemById(id);
+    assert.strictEqual(imported.status, 'needs-review');
+    assert.strictEqual(imported.owner, null);
+    assert.strictEqual(imported.metadata.sourceAuthor, 'author');
+    assert.strictEqual(store.getWorkItemById('github-example-repo-pr-3').owner, 'author');
+
+    store.upsertWorkItem({ ...imported, status: 'ready' });
+    const claimed = claimWorkItem(store, { id, owner: 'worker', assigneeKind: 'agent', sessionId: 'session-1' });
+    assert.strictEqual(claimed.claimed, true);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      sync();
+      const item = store.getWorkItemById(id);
+      assert.strictEqual(item.status, 'running');
+      assert.strictEqual(item.owner, 'worker');
+      assert.strictEqual(item.sessionId, 'session-1');
+      assert.strictEqual(item.metadata.assigneeKind, 'agent');
+      assert.strictEqual(item.metadata.sourceAuthor, 'author');
+    }
+  });
+
   for (const type of ['pr', 'issue']) {
     await test(`${type}: a claimed import stays out of the pickup queue after reimport`, ({ store, source, sync }) => {
       source[type][0].author = null;
@@ -137,7 +160,7 @@ async function run() {
     assert.strictEqual(store.getWorkItemById(id).owner, 'worker');
   });
 
-  for (const [field, value] of Object.entries({ owner: null, sessionId: 'session-1', priority: 'high', repoRoot: null })) {
+  for (const [field, value] of Object.entries({ owner: 'worker', sessionId: 'session-1', priority: 'high', repoRoot: null })) {
     await test(`a local ${field} change alone survives disappearance`, ({ store, source, sync }) => {
       sync();
       const id = 'github-example-repo-issue-8';

@@ -226,7 +226,7 @@ function buildGithubIssueWorkItem(repo, issue, options = {}) {
     status: 'needs-review',
     priority: 'normal',
     url: issue.url || null,
-    owner: githubAuthorLogin(issue),
+    owner: null,
     repoRoot: options.repoRoot || process.cwd(),
     sessionId: options.sessionId || null,
     metadata: {
