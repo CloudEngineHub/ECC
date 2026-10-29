@@ -149,6 +149,34 @@ async function run() {
       }
     });
 
+    await test('automatic claim skips higher-priority unready work and picks READY', async () => {
+      const setup = await createStateStore({ dbPath });
+      try {
+        setup.upsertWorkItem({ id: 'wi-unassigned-high', source: 'manual', title: 'Needs review', status: 'needs-review', priority: 'critical', owner: null, metadata: {} });
+        setup.upsertWorkItem({ id: 'wi-unassigned-low', source: 'manual', title: 'Blocked', status: 'blocked', priority: 'high', owner: null, metadata: {} });
+        setup.upsertWorkItem({ id: 'wi-auto-blocked-high', source: 'manual', title: 'High priority blocked', status: 'blocked', priority: 'critical', owner: null, metadata: {} });
+        setup.upsertWorkItem({ id: 'wi-auto-ready-low', source: 'manual', title: 'Low priority READY', status: 'ready', priority: 'low', owner: null, metadata: {} });
+      } finally { setup.close(); }
+      const result = runClaim(dbPath, ['--owner', 'auto-worker', '--as', 'agent']);
+      assert.strictEqual(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout);
+      assert.strictEqual(payload.claimed, true);
+      assert.strictEqual(payload.item.id, 'wi-auto-ready-low');
+      assert.strictEqual(payload.item.status, 'running');
+    });
+
+    await test('automatic claim returns empty when all unowned items are unready', async () => {
+      const setup = await createStateStore({ dbPath });
+      try {
+        setup.upsertWorkItem({ id: 'wi-unassigned-high', source: 'manual', title: 'Needs review', status: 'needs-review', priority: 'critical', owner: null, metadata: {} });
+        setup.upsertWorkItem({ id: 'wi-unassigned-low', source: 'manual', title: 'Hold', status: 'hold', priority: 'high', owner: null, metadata: {} });
+      } finally { setup.close(); }
+      const result = runClaim(dbPath, ['--owner', 'auto-worker', '--as', 'agent']);
+      assert.strictEqual(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout);
+      assert.deepStrictEqual(payload, { claimed: false, reason: 'no-unassigned-open-items' });
+    });
+
     await test('claim accepts an explicitly ready item', async () => {
       const setup = await createStateStore({ dbPath });
       try { setup.upsertWorkItem({ id: 'wi-explicit-ready', source: 'manual', title: 'Approved', status: 'ready', owner: null, metadata: {} }); }
