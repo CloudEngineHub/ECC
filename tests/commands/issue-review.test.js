@@ -134,7 +134,7 @@ function fixtureGitEnvironment(root, extra = {}) {
 function withTargetCheckout(fn) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-issue-review-target-'));
   function git(...args) {
-    const result = spawnSync('git', ['-C', root, ...args], {
+    const result = spawnSync('git', ['-c', 'maintenance.auto=false', '-c', 'gc.auto=0', '-C', root, ...args], {
       encoding: 'utf8', timeout: 10000,
       env: fixtureGitEnvironment(root)
     });
