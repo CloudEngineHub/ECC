@@ -219,6 +219,8 @@ test('normal installed Copilot TDD command runs from the project with a complete
     const plan = createManifestInstallPlan({ target: 'copilot', moduleIds: ['workflow-quality'], projectRoot: project, homeDir, env });
     applyInstallPlan(plan);
     const skill = fs.readFileSync(path.join(project, '.github', 'skills', 'tdd-workflow', 'SKILL.md'), 'utf8');
+    assert.match(skill, /This Copilot projection runs the detector from the managed \.github\/ecc\/scripts\/ closure/);
+    assert.doesNotMatch(skill, /The resolution lines (?:locate|use)/, 'installed prose must describe the projected command');
     const command = skill.match(/node (\S*setup-package-manager\.js) --detect/);
     assert.ok(command, 'installed skill must give an executable detection command');
     assert.strictEqual(command[1], '.github/ecc/scripts/setup-package-manager.js');

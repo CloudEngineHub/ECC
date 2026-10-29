@@ -24,7 +24,7 @@ function rewriteCopilotWorkflowPaths(content, sourceRelativePath) {
       return `${opening}${indent}node .github/ecc/scripts/setup-package-manager.js --detect${newline}${closing}`;
     });
   if (projectedDetector) {
-    projected = projected.replace(/^([ \t]*)The resolution lines locate ECC's script[^\r\n]*$/gm,
+    projected = projected.replace(/^([ \t]*)The resolution lines (?:locate|use)[^\r\n]*$/gm,
       '$1This Copilot projection runs the detector from the managed .github/ecc/scripts/ closure in the project root. It preserves the project working directory and does not use Claude plugin or home-directory resolution.');
   }
   return projected.replace(/(^|[\s`"'(])scripts\/setup-package-manager\.js\b/g,
