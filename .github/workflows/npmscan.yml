@@ -3,9 +3,11 @@ name: npmscan
 # Warn-only dependency check. When package.json, package-lock.json or yarn.lock
 # changes, it sends those files (base and PR versions) to npmscan.com and reports
 # what the PR changes: known malware or vulnerabilities in changed packages, new
-# install scripts, swapped tarballs or checksums, and override changes. No source
-# code, secrets or token leave the runner. It never fails the check, and it
-# comments only when it finds something; the full report is in the job summary.
+# install scripts, swapped tarballs or checksums, and override changes. No
+# environment variables or GitHub token are intentionally included. Values
+# embedded in dependency files are included, such as registry URLs and scripts.
+# Non-regular checkout inputs are refused before transmission. The check is
+# warning-only and comments on findings; the full report is in the job summary.
 
 on:
   pull_request:

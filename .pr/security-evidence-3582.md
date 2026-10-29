@@ -19,7 +19,7 @@ Disclosure: the PR author maintains npmscan.com and `NPMscan/npmscan-action`.
 - The changed files among `package.json`, `package-lock.json` and `yarn.lock`, base and PR
   versions, over HTTPS to `https://npmscan.com/api/analysis/dependency-diff`. Unchanged files are
   skipped without a request.
-- Never source code, other files, environment variables, secrets or the GitHub token.
+- Only the selected dependency files are intentionally transmitted. Values embedded in them, including registry URLs and scripts, are part of that payload. Environment variables and the GitHub token are not intentionally included. The workflow rejects symlinks and other non-regular checkout inputs before the external action runs.
 - npmscan then looks up the changed package names and versions on the public npm registry and
   OSV.dev.
 
@@ -44,11 +44,11 @@ All runs are on a fork, against ECC's own `package.json`, `package-lock.json` an
 
 | Case | Change | Result | Comment | Warning annotations | Run |
 |---|---|---|---|---|---|
-| Typical skill PR | one new `files` entry in `package.json` | ✅ green | none | none | [run](https://github.com/salemalem/ECC/actions/runs/39522250264) |
-| Swapped checksum | `ms@2.1.3` keeps its version, new `yarn.lock` checksum | ✅ green | yes | `ms 2.1.3 → 2.1.3: tarball source/integrity changed` | [run](https://github.com/salemalem/ECC/actions/runs/39522254626) |
-| New root script | `"postinstall": "node scripts/setup.js"` | ✅ green | yes | `Root postinstall script added: node scripts/setup.js` | [run](https://github.com/salemalem/ECC/actions/runs/39522259083) |
-| Scan can't run | same as the real update, API pointed at an address that never answers | ✅ green after 12m47s | yes: "⚠️ The scan could not run", one `Scan failed` block per file | per file: `npmscan scan failed`, `package.json: npmscan API returned HTTP 000: curl: (28) Connection timed out after 120002 milliseconds (not blocking: fail-on-error is false)` | [run](https://github.com/salemalem/ECC/actions/runs/39522263215) |
-| Real update | `01b0202` (2026-10-10 advisory fixes) | ✅ green | yes | 4 override changes; `markdown-it 14.3.0 → 14.3.1: HIGH vulnerability (3 advisories)` | [run](https://github.com/salemalem/ECC/actions/runs/39522245601) |
+| Typical skill PR | one new `files` entry in `package.json` | pass green | none | none | [run](https://github.com/salemalem/ECC/actions/runs/39522250264) |
+| Swapped checksum | `ms@2.1.3` keeps its version, new `yarn.lock` checksum | pass green | yes | `ms 2.1.3 → 2.1.3: tarball source/integrity changed` | [run](https://github.com/salemalem/ECC/actions/runs/39522254626) |
+| New root script | `"postinstall": "node scripts/setup.js"` | pass green | yes | `Root postinstall script added: node scripts/setup.js` | [run](https://github.com/salemalem/ECC/actions/runs/39522259083) |
+| Scan can't run | same as the real update, API pointed at an address that never answers | pass green after 12m47s | yes: "warning: The scan could not run", one `Scan failed` block per file | per file: `npmscan scan failed`, `package.json: npmscan API returned HTTP 000: curl: (28) Connection timed out after 120002 milliseconds (not blocking: fail-on-error is false)` | [run](https://github.com/salemalem/ECC/actions/runs/39522263215) |
+| Real update | `01b0202` (2026-10-10 advisory fixes) | pass green | yes | 4 override changes; `markdown-it 14.3.0 → 14.3.1: HIGH vulnerability (3 advisories)` | [run](https://github.com/salemalem/ECC/actions/runs/39522245601) |
 
 A finding and a failed scan are both warnings, with different titles: findings name the package or
 script, and a failed scan reads `npmscan scan failed`, with the reason, and is labelled not blocking.
