@@ -68,7 +68,7 @@ function claimWorkItem(store, { id, owner, assigneeKind, sessionId, status } = {
       throw new Error(`Work item ${target.id} is already owned by ${target.owner}; cannot claim.`);
     }
     // Repeating an active claim by the same owner is idempotent.
-    if (['running', 'claimed'].includes(String(target.status).trim().toLowerCase())) {
+    if (['running', 'claimed', 'in-progress'].includes(String(target.status).trim().toLowerCase())) {
       return { claimed: true, item: target };
     }
   }
