@@ -656,11 +656,13 @@ function runTests() {
     return path.join(os.tmpdir(), `claude-context-bucket-${sessionId}`);
   }
 
+  const transcriptDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-compact-transcripts-'));
+  process.once('exit', () => fs.rmSync(transcriptDir, { recursive: true, force: true }));
   let transcriptSeq = 0;
 
   function writeTranscriptFixture(tokens, model = 'claude-sonnet-4-6') {
     transcriptSeq += 1;
-    const filePath = path.join(os.tmpdir(), `compact-transcript-${process.pid}-${transcriptSeq}.jsonl`);
+    const filePath = path.join(transcriptDir, `transcript-${transcriptSeq}.jsonl`);
     writeTranscriptTokens(filePath, tokens, model);
     return filePath;
   }
@@ -680,6 +682,23 @@ function runTests() {
     });
     fs.writeFileSync(filePath, record + '\n');
   }
+
+  if (test('transcript fixtures preserve an already occupied shared-temp path', () => {
+    const occupied = path.join(os.tmpdir(), `compact-transcript-${process.pid}-${transcriptSeq + 1}.jsonl`);
+    let owned = false;
+    let transcript;
+    try {
+      fs.writeFileSync(occupied, 'UNRELATED FIXTURE SENTINEL\n', { flag: 'wx', mode: 0o600 });
+      owned = true;
+      transcript = writeTranscriptFixture(170000);
+      assert.strictEqual(fs.readFileSync(occupied, 'utf8'), 'UNRELATED FIXTURE SENTINEL\n');
+      assert.notStrictEqual(transcript, occupied, 'fixtures need an exclusive private namespace');
+    } finally {
+      if (owned) fs.unlinkSync(occupied);
+      if (transcript && transcript !== occupied) fs.unlinkSync(transcript);
+    }
+  })) passed++;
+  else failed++;
 
   function createContextContext() {
     const base = createCounterContext('test-context');
@@ -708,6 +727,32 @@ function runTests() {
       const context = parsed.hookSpecificOutput.additionalContext;
       assert.ok(context.includes('Context ~170k tokens'), `Expected token estimate. Got: ${context}`);
       assert.ok(!context.includes('% of'), `Expected no percentage for an assumed window. Got: ${context}`);
+    } finally {
+      try { fs.unlinkSync(transcript); } catch (_err) { /* ignore */ }
+      ctx.cleanup();
+    }
+  })) passed++;
+  else failed++;
+
+  if (test('emits a context reminder for usage aligned with the default tail boundary', () => {
+    const ctx = createContextContext();
+    const transcript = writeTranscriptFixture(170000);
+    try {
+      const usageLine = fs.readFileSync(transcript, 'utf8');
+      const toolResult = JSON.stringify({ type: 'user', message: { content: '' } });
+      const tailBytes = require('../../scripts/lib/transcript-context').DEFAULT_TRANSCRIPT_TAIL_BYTES;
+      const padding = tailBytes - Buffer.byteLength(usageLine + toolResult + '\n');
+      const paddedResult = JSON.stringify({ type: 'user', message: { content: 'x'.repeat(padding) } });
+      fs.writeFileSync(transcript, '{}\n' + usageLine + paddedResult + '\n');
+      const result = runCompactWithInput(
+        { session_id: ctx.sessionId, transcript_path: transcript },
+        { ECC_CONTEXT_WINDOW_TOKENS: '', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '', COMPACT_CONTEXT_THRESHOLD: '160000' }
+      );
+      assert.strictEqual(result.code, 0, 'Should exit 0');
+      const parsed = JSON.parse(result.stdout);
+      assert.strictEqual(parsed.hookSpecificOutput.hookEventName, 'PreToolUse');
+      assert.ok(parsed.hookSpecificOutput.additionalContext.includes('Context ~170k tokens'));
+      assert.strictEqual(fs.readFileSync(ctx.bucketFile, 'utf8').trim(), '0');
     } finally {
       try { fs.unlinkSync(transcript); } catch (_err) { /* ignore */ }
       ctx.cleanup();
@@ -830,7 +875,7 @@ function runTests() {
 
   if (test('survives a malformed transcript (exit 0, silent)', () => {
     const ctx = createContextContext();
-    const transcript = path.join(os.tmpdir(), `compact-transcript-broken-${Date.now()}.jsonl`);
+    const transcript = path.join(transcriptDir, `broken-${Date.now()}.jsonl`);
     fs.writeFileSync(transcript, 'this is not json\n{broken');
     try {
       const result = runCompactWithInput({ session_id: ctx.sessionId, transcript_path: transcript });
@@ -849,7 +894,7 @@ function runTests() {
       fs.writeFileSync(ctx.counterFile, '49');
       const result = runCompactWithInput({
         session_id: ctx.sessionId,
-        transcript_path: path.join(os.tmpdir(), `missing-${Date.now()}.jsonl`)
+        transcript_path: path.join(transcriptDir, `missing-${Date.now()}.jsonl`)
       });
       assert.strictEqual(result.code, 0);
       assert.ok(result.stdout.includes('50 tool calls reached'), `Count signal must still work. Got: "${result.stdout}"`);

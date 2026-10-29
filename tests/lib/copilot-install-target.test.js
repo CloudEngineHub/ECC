@@ -219,6 +219,8 @@ test('normal installed Copilot TDD command runs from the project with a complete
     const plan = createManifestInstallPlan({ target: 'copilot', moduleIds: ['workflow-quality'], projectRoot: project, homeDir, env });
     applyInstallPlan(plan);
     const skill = fs.readFileSync(path.join(project, '.github', 'skills', 'tdd-workflow', 'SKILL.md'), 'utf8');
+    assert.match(skill, /This Copilot projection runs the detector from the managed \.github\/ecc\/scripts\/ closure/);
+    assert.doesNotMatch(skill, /The resolution lines (?:locate|use)/, 'installed prose must describe the projected command');
     const command = skill.match(/node (\S*setup-package-manager\.js) --detect/);
     assert.ok(command, 'installed skill must give an executable detection command');
     assert.strictEqual(command[1], '.github/ecc/scripts/setup-package-manager.js');
@@ -228,6 +230,22 @@ test('normal installed Copilot TDD command runs from the project with a complete
     const detected = spawnSync(process.execPath, [command[1], '--detect'], { cwd: project, env, encoding: 'utf8', timeout: 15000 });
     assert.strictEqual(detected.status, 0, detected.stderr);
     assert.match(detected.stdout, /pnpm/);
+    if (process.platform !== 'win32') {
+      const detectorBlock = [...skill.matchAll(/```bash\r?\n([\s\S]*?)```/g)]
+        .map(match => match[1]).find(block => block.includes('setup-package-manager.js'));
+      assert.ok(detectorBlock, 'installed skill must retain its executable Bash example');
+      assert.doesNotMatch(detectorBlock, /ECC_ROOT|CLAUDE_PLUGIN_ROOT/,
+        'Copilot must use its managed project helper instead of a Claude resolver');
+      const actualRecipe = spawnSync('bash', ['-c', detectorBlock], {
+        cwd: project, encoding: 'utf8', timeout: 15000,
+        env: { ...env, HOME: homeDir, USERPROFILE: homeDir,
+          CLAUDE_PLUGIN_ROOT: path.join(project, 'wrong-plugin'), CLAUDE_CONFIG_DIR: path.join(project, 'wrong-config') }
+      });
+      assert.ifError(actualRecipe.error);
+      assert.strictEqual(actualRecipe.status, 0, actualRecipe.stderr);
+      assert.match(actualRecipe.stdout, /pnpm/);
+    }
+
     assert.ok(!plan.operations.some(operation => operation.kind === 'update-claude-settings'
       || /[\\/]\.github[\\/]hooks[\\/]|[\\/]ecc[\\/]scripts[\\/]hooks[\\/]|settings\.json$|hooks\.json$/.test(operation.destinationPath)), 'Copilot must not register hooks');
     assert.strictEqual(fs.readFileSync(path.join(project, 'scripts', 'setup-package-manager.js'), 'utf8'), 'USER PROJECT SENTINEL\n');
@@ -257,6 +275,19 @@ test('normal installed Copilot TDD command runs from the project with a complete
   } finally {
     fs.rmSync(project, { recursive: true, force: true });
   }
+});
+
+test('Copilot preserves unrelated workflow shell steps around a detector call', () => {
+  const { transformInstallContent } = require('../../scripts/lib/install/content-transform');
+  const content = [
+    '```bash', 'ECC_ROOT="/custom/tool"', 'printf before',
+    'node "$ECC_ROOT/scripts/setup-package-manager.js" --detect',
+    'printf after', '```', ''
+  ].join('\n');
+  const actual = transformInstallContent({
+    contentTransform: 'copilot-workflow-paths', sourceRelativePath: 'skills/fixture/SKILL.md'
+  }, content);
+  assert.strictEqual(actual, content, 'only the canonical TDD detector block may be replaced');
 });
 
 test('Copilot rewrites Markdown commands while preserving binary skill assets and source bytes', () => {

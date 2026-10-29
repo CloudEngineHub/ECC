@@ -138,6 +138,13 @@ jobs:
             *) echo "Unsupported package manager: ${{ matrix.pm }}" && exit 1 ;;
           esac
 
+      - name: Check observer and revision identity
+        if: matrix.scope == 'full'
+        shell: bash
+        run: |
+          node tests/lib/observer-sessions.test.js
+          node tests/commands/issue-review.test.js
+
       # Run tests. Full lanes run every file through a 4-process pool on Linux
       # and macOS; Windows stays serial because its process spawn and temp-dir
       # cleanup are the flaky part. pm lanes derive their file list from the
