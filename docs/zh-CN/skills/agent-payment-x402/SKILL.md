@@ -445,7 +445,14 @@ app.use(
     resourceServer,
   ),
 );
-app.post("/report", async (req, res) => res.json(await buildReport(req.body)));
+app.post("/report", async (req, res, next) => {
+  try {
+    res.json(await buildReport(req.body));
+  } catch (error) {
+    // Keep the claim: a failed handler may already have performed side effects.
+    next(error);
+  }
+});
 ```
 
 任何支持原子条件插入的存储都可以：DynamoDB 带 `attribute_not_exists` 的 `PutItem`，或 Postgres 的唯一索引。有两件事守卫不会替你决定。存储不可用时，`FAIL_CLOSED` 以可用性为代价保住“每个授权只运行一次”的保证；失败开放（fail open）能让路由继续服务，但在存储恢复之前每个副本都会运行处理程序，因此只应用于幂等的处理程序。另外，`payment_replayed` 表示该授权之前已被提交过，并不表示第一次尝试失败：如果客户端丢失了第一次的响应，工作可能已经执行、支付可能已经结算，因此在签署新授权之前应先核对原始请求的结果。这只能阻止同一授权的重复副本。在验证和结算之间使支付失效的付款方（例如转走资金）仍能触发一次处理程序运行；对于高成本路由，应在执行工作前先锁定资金。

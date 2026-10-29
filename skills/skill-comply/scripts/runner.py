@@ -48,6 +48,7 @@ SAFE_GIT_OPTIONS = {
 }
 SAFE_GIT_CONFIG_KEYS = frozenset({"user.name", "user.email", "init.defaultbranch", "commit.gpgsign"})
 SAFE_TAR_SHORT_FLAGS = frozenset("cxtvfzjJC")
+SAFE_UNZIP_SHORT_FLAGS = frozenset("onqjlt")
 TAR_VALUE_LETTERS = frozenset("bCfFgHIKLNTVX")  # GNU tar short options that take a value
 SAFE_TAR_LONG_OPTIONS = frozenset({
     "--create", "--extract", "--list", "--file", "--directory", "--verbose",
@@ -272,26 +273,49 @@ def _extracted_archives_safe(tool: str, args: list[str], sandbox_dir: Path) -> b
     elif any(char in arg for arg in args for char in "*?["):
         return False  # unzip expands wildcards in the archive name itself
     root = sandbox_dir.resolve()
-    for value in _archive_operands(tool, args):
+    operands = _archive_operands(tool, args)
+    if tool == "unzip" and not operands:
+        return False
+    for value in operands:
         path = (root / value).resolve()
+        # unzip searches for an implicit .zip suffix when its operand is
+        # missing. Check an existing ZIP, never an alternate extractor lookup.
+        if tool == "unzip" and (not path.is_file() or not zipfile.is_zipfile(path)):
+            return False
         if path.is_file() and not _archive_safe(path):
             return False
     return True
 
 
+
+def _unzip_archive_index(args: list[str]) -> int | None:
+    """Parse bounded unzip flags; only -d takes a following argument.
+
+    No password, zipinfo-mode or attached-value options are admitted: their
+    operands must not be confused with the archive whose members we inspect.
+    """
+    archive_index = None
+    destination_pending = False
+    for index, arg in enumerate(args):
+        if destination_pending:
+            if not arg or arg.startswith("-"):
+                return None
+            destination_pending = False
+        elif arg == "-d":
+            destination_pending = True
+        elif arg.startswith("-"):
+            if len(arg) < 2 or not set(arg[1:]) <= SAFE_UNZIP_SHORT_FLAGS:
+                return None
+        elif archive_index is None:
+            archive_index = index
+    return None if destination_pending else archive_index
+
 def _archive_operands(tool: str, args: list[str]) -> list[str]:
     """The archive file names only; members named after them are entry names, not files."""
     found: list[str] = []
     if tool == "unzip":
-        skip = False
-        for arg in args:
-            if skip:
-                skip = False
-            elif arg == "-d":
-                skip = True
-            elif not arg.startswith("-"):
-                return [arg]  # the first operand is the archive, the rest are members
-        return found
+        archive_index = _unzip_archive_index(args)
+        return [] if archive_index is None else [args[archive_index]]
     # Each pending entry is True when the next argument is the archive, False for another option's value.
     pending: list[bool] = []
     for index, arg in enumerate(args):
@@ -366,6 +390,15 @@ def _sandboxed_setup_command(parts: list[str], sandbox_dir: Path) -> list[str] |
         return ["git", "-c", f"core.hooksPath={os.devnull}", *args]
     if tool in {"tar", "unzip"} and not _extracted_archives_safe(tool, args, sandbox_dir):
         return None
+    if tool == "unzip":
+        archive_index = _unzip_archive_index(args)
+        if archive_index is None:
+            return None
+        checked_args = list(args)
+        # Bind execution to the checked, existing archive. No implicit suffix
+        # lookup or a different option operand may reach the extractor.
+        checked_args[archive_index] = str((sandbox_dir.resolve() / args[archive_index]).resolve())
+        return [tool, *checked_args]
     if tool == "tar":
         return parts if _tar_args_allowed(args) else None
     if tool == "npm":

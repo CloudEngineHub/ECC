@@ -101,6 +101,16 @@ test('SKILL.md walks the nine review phases in order', () => {
   });
 });
 
+test('verification binds code evidence to the canonical issue repository', () => {
+  const verify = sectionBody(skill, '### Phase 4: VERIFY');
+  assert.match(verify, /canonical host and owner\/repository/);
+  assert.match(verify, /git remote -v/);
+  assert.match(verify, /GH_REPO.*does not prove checkout identity/);
+  assert.match(verify, /fork's upstream relationship and target ref/);
+  assert.match(verify, /another repository.*unverified/s);
+  assert.match(verify, /checkout root, HEAD SHA/);
+});
+
 test('SKILL.md treats issue content as untrusted and never runs it', () => {
   const rule = sectionBody(skill, '## Untrusted Content Rule');
   assert.ok(rule.length > 0, 'Expected an "Untrusted Content Rule" section');
@@ -131,7 +141,7 @@ test('every GitHub write binds the fetched repository instead of the ambient che
   const commands = [...publish.matchAll(/`(gh issue (?:comment|edit) [^`]+)`/g)].map(match => match[1]);
   assert.strictEqual(commands.length, 2, 'Expected comment and label publication examples');
   for (const command of commands) {
-    assert.ok(command.includes('--repo <OWNER/REPO>'), command);
+    assert.ok(command.includes('--repo <HOST/OWNER/REPO>'), command);
   }
   assert.ok(publish.includes('recheck the fetched issue URL'), 'Expected a fresh identity check before publication');
 });
@@ -158,17 +168,17 @@ test('documented cross-repository writes replay through gh without selecting the
     const commands = [...publish.matchAll(/`(gh issue (?:comment|edit) [^`]+)`/g)].map(match => match[1]);
     assert.strictEqual(commands.length, 2);
     for (const command of commands) {
-      const expanded = command.replace('<NUMBER>', '17').replace('<OWNER/REPO>', 'other-owner/other-repo')
+      const expanded = command.replace('<NUMBER>', '17').replace('<HOST/OWNER/REPO>', 'github.com/other-owner/other-repo')
         .replace('<file>', 'draft.md').replace('<labels>', 'bug');
       const [executable, ...args] = expanded.split(/\s+/);
       const result = spawnSync(executable, args, {
         cwd: ambient, encoding: 'utf8', timeout: 5000,
-        env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH || ''}` }
+        env: { ...process.env, GH_HOST: 'other.example.test', PATH: `${bin}${path.delimiter}${process.env.PATH || ''}` }
       });
       assert.ifError(result.error);
       assert.strictEqual(result.status, 0, result.stderr);
       const invocation = JSON.parse(result.stdout);
-      assert.strictEqual(invocation.repo, 'other-owner/other-repo', expanded);
+      assert.strictEqual(invocation.repo, 'github.com/other-owner/other-repo', expanded);
       assert.strictEqual(invocation.args[2], '17');
     }
   } finally {
@@ -248,5 +258,5 @@ test('command appears in the quick reference and the command-agent map', () => {
   assert.ok(/`\/issue-review`/.test(read('docs/COMMAND-AGENT-MAP.md')), 'Expected /issue-review in docs/COMMAND-AGENT-MAP.md');
 });
 
-console.log(`\n${passed} passed, ${failed} failed\n`);
+console.log(`\nPassed: ${passed}, Failed: ${failed}\n`);
 process.exit(failed > 0 ? 1 : 0);

@@ -445,7 +445,14 @@ app.use(
     resourceServer,
   ),
 );
-app.post("/report", async (req, res) => res.json(await buildReport(req.body)));
+app.post("/report", async (req, res, next) => {
+  try {
+    res.json(await buildReport(req.body));
+  } catch (error) {
+    // Keep the claim: a failed handler may already have performed side effects.
+    next(error);
+  }
+});
 ```
 
 アトミックな条件付き挿入ができるストアなら何でもよい：DynamoDB の `attribute_not_exists` 付き `PutItem`、または Postgres のユニークインデックス。ガードが代わりに決めてくれないことが 2 つある。ストアが停止している場合、`FAIL_CLOSED` は可用性と引き換えに承認ごとに 1 回という保証を守る。フェイルオープンにするとルートは動き続けるが、ストアが回復するまで各コピーがハンドラーを実行するので、冪等なハンドラーに限って使うこと。また `payment_replayed` は、その承認が以前に提示されたことを意味し、最初の試行が失敗したことを意味しない。クライアントが最初のレスポンスを失った場合、処理が実行され支払いが決済されている可能性があるので、新しい承認に署名する前に元のリクエストの結果を照合すること。これが防ぐのは 1 つの承認の重複コピーだけである。検証と決済の間に支払いを無効にする支払者（たとえば資金を移動する）は、依然としてハンドラーを 1 回実行させられる。高コストなルートでは、作業の前に資金を確保すること。

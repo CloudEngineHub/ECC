@@ -693,7 +693,7 @@ Start with the workflow you need, not the full catalog.
 | Building a feature | `/ecc:plan "describe the feature"`, then `tdd-workflow` |
 | Fixing a bug | Reproduce it with a failing test, then use `tdd-workflow` |
 | Reviewing new code | `/code-review` for a fresh-context review |
-| Triaging a GitHub issue | `/issue-review <number>` to verify it against the code and draft a reply |
+| Triaging a GitHub issue | `/ecc:issue-review <number>` (plugin) or `/issue-review <number>` (manual install) to verify it against the code and draft a reply |
 | Repairing a build | `/build-fix` |
 | Cleaning a codebase | `/refactor-clean` |
 | Checking context pressure | `/context-budget` |
@@ -734,7 +734,7 @@ Skills are the canonical workflow surface; maintained slash entries stay availab
 | Design system architecture | `/ecc:plan` + architect agent | architect |
 | Write code with tests first | `tdd-workflow` skill | tdd-guide |
 | Review code I just wrote | `/code-review` | code-reviewer |
-| Review a GitHub issue | `/issue-review` | — (issue-review skill) |
+| Review a GitHub issue | `/ecc:issue-review` (plugin), `/issue-review` (manual install) | — (issue-review skill) |
 | Fix a failing build | `/build-fix` | build-error-resolver |
 | Run end-to-end tests | `e2e-testing` skill | e2e-runner |
 | Find security vulnerabilities | `/security-scan` | security-reviewer |

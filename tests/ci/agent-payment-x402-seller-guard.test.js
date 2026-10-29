@@ -75,7 +75,7 @@ class Facilitator {
   }
 }
 
-function load(doc, { mode = 'ok', failClosed = true } = {}) {
+function load(doc, { mode = 'ok', failClosed = true, handlerRejects = false } = {}) {
   const text = fs.readFileSync(path.join(ROOT, doc), 'utf8');
   const blocks = [...text.matchAll(/```typescript\n([\s\S]*?)\n```/g)];
   const block = blocks.find(match => match[1].includes('.onAfterVerify('));
@@ -121,7 +121,12 @@ function load(doc, { mode = 'ok', failClosed = true } = {}) {
     process: { env: { REDIS_URL: 'redis://stub', FACILITATOR_URL: 'http://stub', PAY_TO } },
     // A handler that takes time, like the expensive ones the guard is for, so
     // concurrent copies are all verified while the first one is still running.
-    buildReport: async () => { runs.push(1); await new Promise(r => setTimeout(r, 150)); return { report: 'ok' }; },
+    buildReport: async () => {
+      runs.push(1);
+      await new Promise(r => setTimeout(r, 150));
+      if (handlerRejects) throw new Error('synthetic report failure');
+      return { report: 'ok' };
+    },
   });
   new vm.Script(compiled.outputText, { filename: doc }).runInContext(context);
   return { ...context.module.exports, facilitator, redis, runs };
@@ -132,7 +137,7 @@ async function serve(h) {
   const url = `http://127.0.0.1:${server.address().port}/report`;
   const client = new x402HTTPClient(new x402Client().register('eip155:8453',
     new ExactEvmClient(toClientEvmSigner(privateKeyToAccount(generatePrivateKey())))));
-  const post = headers => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}' });
+  const post = (headers, options = {}) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}', ...options });
   const sign = async () => {
     const challenge = await post({});
     const required = client.getPaymentRequiredResponse(name => challenge.headers.get(name), await challenge.json().catch(() => undefined));
@@ -143,7 +148,11 @@ async function serve(h) {
     return header ? JSON.parse(Buffer.from(header, 'base64').toString()).error : undefined;
   };
   // Node 18's close() waits for idle keep-alive sockets left by fetch.
-  return { post, sign, reason, close: () => new Promise(resolve => { server.close(resolve); server.closeIdleConnections?.(); }) };
+  return { post, sign, reason, close: (force = false) => new Promise(resolve => {
+    server.close(resolve);
+    if (force) server.closeAllConnections?.();
+    else server.closeIdleConnections?.();
+  }) };
 }
 
 const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64');
@@ -173,6 +182,30 @@ for (const doc of DOCS) {
         assert.equal(opts.expiration.value, NOW_S + 900);
       }
     } finally { await s.close(); }
+  });
+  add('a rejected report reaches the Express error handler without settlement or replay', async () => {
+    const h = load(doc, { handlerRejects: true });
+    const errors = [];
+    h.app.use((error, _req, res, _next) => {
+      errors.push(error.message);
+      res.status(500).json({ error: 'report_failed' });
+    });
+    const s = await serve(h);
+    try {
+      const header = await s.sign();
+      const response = await s.post(header, { signal: AbortSignal.timeout(1500) });
+      assert.equal(response.status, 500);
+      assert.deepEqual(await response.json(), { error: 'report_failed' });
+      assert.deepEqual(errors, ['synthetic report failure']);
+      assert.equal(h.runs.length, 1);
+      assert.equal(h.facilitator.settles, 0, 'a failed response must not be settled');
+      const retry = await s.post(header);
+      assert.equal(retry.status, 402);
+      assert.equal(s.reason(retry), 'payment_replayed');
+      assert.equal(h.runs.length, 1, 'keep the claim because work may already have side effects');
+      assert.equal(h.facilitator.settles, 0);
+      assert.equal((await s.post({})).status, 402, 'the server remains responsive');
+    } finally { await s.close(true); }
   });
   add('an invalid signature takes no claim; the valid payment is then served', async () => {
     const h = load(doc);

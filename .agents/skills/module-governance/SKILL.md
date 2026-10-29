@@ -86,7 +86,7 @@ terminal working directory. Resolve the installed `docs-governance` skill path
 and run its existing read-only link check as an agreed verification step:
 
 ```bash
-python3 <docs-governance-skill>/scripts/audit-docs.py --root <repository> --scope artifacts
+python3 <docs-governance-skill>/scripts/audit-docs.py --root <repository> --scope modules --module <module-directory>
 ```
 
 Confirm that the audit scanned the changed local instructions, context, and

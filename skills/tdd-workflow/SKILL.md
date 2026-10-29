@@ -92,18 +92,15 @@ Do not assume `npm test`. The commands in the steps and examples below use `<tes
 1. **Run the package-manager detector** (ships with ECC):
 
    ```bash
-   # Resolve the ECC root in every install mode: plugin root, standalone install
-   # (~/.claude or $CLAUDE_CONFIG_DIR), then an ECC checkout run from its root.
+   # Use the configured plugin root or standalone install (~/.claude or
+   # $CLAUDE_CONFIG_DIR). For a reviewed and explicitly authorized ECC checkout:
+   # export CLAUDE_PLUGIN_ROOT="/absolute/path/to/reviewed/ECC"
    ECC_ROOT="${CLAUDE_PLUGIN_ROOT:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}"
-   if [ ! -f "$ECC_ROOT/scripts/setup-package-manager.js" ]; then
-     [ -f "$PWD/.claude-plugin/plugin.json" ] && [ -f "$PWD/package.json" ] || { echo "ECC scripts not found (set CLAUDE_PLUGIN_ROOT or run from an ECC checkout)" >&2; exit 1; }
-     ECC_ROOT="$PWD"
-   fi
-   [ -f "$ECC_ROOT/scripts/setup-package-manager.js" ] || { echo "ECC scripts not found (set CLAUDE_PLUGIN_ROOT or run from an ECC checkout)" >&2; exit 1; }
+   [ -f "$ECC_ROOT/scripts/setup-package-manager.js" ] || { echo "ECC scripts not found in the selected root (set CLAUDE_PLUGIN_ROOT to an authorized ECC checkout)" >&2; exit 1; }
    node "$ECC_ROOT/scripts/setup-package-manager.js" --detect
    ```
 
-   The resolution lines locate ECC's script in a plugin install (`CLAUDE_PLUGIN_ROOT`), a standalone install (`~/.claude` or `$CLAUDE_CONFIG_DIR`), or an ECC checkout, and stop with an explicit error when none matches instead of guessing a path in the user's project. Keep the paths quoted — install locations may contain spaces.
+   The resolution lines use the configured plugin root or standalone install and stop when the selected root lacks the helper. For an ECC checkout you have reviewed and authorized, explicitly set `CLAUDE_PLUGIN_ROOT` to its absolute path first. Project marker files do not establish executable trust. Keep the working directory at the project under test, and keep paths quoted because install locations may contain spaces.
 
    It resolves the package manager (npm / pnpm / yarn / bun) from, in order: `CLAUDE_PACKAGE_MANAGER`, `.claude/package-manager.json`, the `package.json` `packageManager` field, the lockfile, then global config.
 

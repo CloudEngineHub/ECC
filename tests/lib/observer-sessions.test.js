@@ -407,6 +407,57 @@ test('resolveProjectContext ignores missing registry roots without adopting thei
   }
 });
 
+test('resolveProjectContext compares native long paths when legacy realpath retains a short spelling', () => {
+  const root = createTempDir();
+  const originalRealpath = fs.realpathSync;
+  const nativeRealpath = originalRealpath.native || originalRealpath;
+  try {
+    const storage = path.join(root, 'store');
+    const repo = path.join(root, 'repo');
+    initRepo(repo, 'https://github.com/owner/repo.git');
+    const physicalRoot = nativeRealpath(repo);
+    const shortRoot = path.resolve(root, 'SHORT~1');
+    writeRegistry(storage, [{ id: 'registered-project', root: shortRoot }]);
+    // Node's JS walker preserves non-symlink 8.3 segments on Windows; the
+    // native OS resolver expands them. Model those distinct results on every OS.
+    const legacyRealpath = (value, ...args) => path.resolve(value) === shortRoot
+      ? shortRoot : originalRealpath(value, ...args);
+    let nativeAliasCalls = 0;
+    legacyRealpath.native = (value, ...args) => {
+      if (path.resolve(value) === shortRoot) {
+        nativeAliasCalls += 1;
+        return physicalRoot;
+      }
+      return nativeRealpath(value, ...args);
+    };
+    fs.realpathSync = legacyRealpath;
+    const { result } = resolveIn(storage, repo);
+    assert.strictEqual(result.projectId, 'registered-project');
+    assert.deepStrictEqual(result.aliasProjectIds, []);
+    assert.ok(nativeAliasCalls > 0, 'root comparison must use the native canonical spelling');
+  } finally {
+    fs.realpathSync = originalRealpath;
+    cleanup(root);
+  }
+});
+
+test('resolveProjectContext retains root comparison when the native realpath API is unavailable', () => {
+  const root = createTempDir();
+  const originalNative = fs.realpathSync.native;
+  try {
+    const storage = path.join(root, 'store');
+    const repo = path.join(root, 'repo');
+    initRepo(repo, 'https://github.com/owner/repo.git');
+    writeRegistry(storage, [{ id: 'registered-project', root: fs.realpathSync(repo) }]);
+    fs.realpathSync.native = undefined;
+    const { result } = resolveIn(storage, repo);
+    assert.strictEqual(result.projectId, 'registered-project');
+  } finally {
+    fs.realpathSync.native = originalNative;
+    cleanup(root);
+  }
+});
+
 console.log(`\nPassed: ${passed}`);
 console.log(`Failed: ${failed}`);
 process.exit(failed > 0 ? 1 : 0);

@@ -446,7 +446,14 @@ app.use(
     resourceServer,
   ),
 );
-app.post("/report", async (req, res) => res.json(await buildReport(req.body)));
+app.post("/report", async (req, res, next) => {
+  try {
+    res.json(await buildReport(req.body));
+  } catch (error) {
+    // Keep the claim: a failed handler may already have performed side effects.
+    next(error);
+  }
+});
 ```
 
 Any store with an atomic conditional insert works: DynamoDB `PutItem` with `attribute_not_exists`, or a unique index in Postgres. Two things the guard does not decide for you. If the store is down, `FAIL_CLOSED` keeps the once-per-authorization guarantee at the cost of availability; failing open keeps the route up but lets every copy run the handler until the store recovers, so use it only for idempotent handlers. And `payment_replayed` means the authorization was presented before, not that the first attempt failed: if the client lost the first response, the work may have run and the payment may have settled, so it should reconcile the original request before signing a new authorization. This closes duplicate copies of one authorization only. A payer who invalidates the payment between verify and settle (for example by moving the funds) still gets one handler run; for expensive routes, hold funds before doing the work.

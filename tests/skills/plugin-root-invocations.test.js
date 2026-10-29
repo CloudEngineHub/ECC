@@ -5,7 +5,7 @@
  * The documented commands have to work in every install mode:
  *   - plugin install (CLAUDE_PLUGIN_ROOT set; the path may contain spaces)
  *   - standalone install (~/.claude or $CLAUDE_CONFIG_DIR)
- *   - ECC checkout run from its root
+ *   - explicitly authorized ECC checkout (CLAUDE_PLUGIN_ROOT set)
  * and when none of those resolves, the command must stop with an explicit
  * error instead of a misleading `Cannot find module` from a guessed path.
  *
@@ -73,11 +73,15 @@ const RESOLVER_SNIPPET =
 function assertResolvesScript(skillName, script) {
   const skill = readSkill(skillName);
   assert.ok(skill.includes(RESOLVER_SNIPPET),
-    `${skillName} must probe the plugin root, the standalone install and the checkout`);
-  assert.ok(skill.includes(`if [ ! -f "$ECC_ROOT/scripts/${script}" ]; then`),
-    `${skillName} must probe the resolved helper before considering a checkout`);
-  assert.ok(skill.includes('[ -f "$PWD/.claude-plugin/plugin.json" ] && [ -f "$PWD/package.json" ]'),
-    `${skillName} must identify an ECC checkout before executing a PWD helper`);
+    `${skillName} must use the configured plugin/checkout root or standalone install`);
+  assert.ok(skill.includes(`[ -f "$ECC_ROOT/scripts/${script}" ] ||`),
+    `${skillName} must refuse a missing helper in the selected trusted root`);
+  assert.doesNotMatch(skill, /ECC_ROOT=["']?\$PWD/,
+    `${skillName} must not derive executable trust from the working directory`);
+  assert.doesNotMatch(skill, /\$PWD\/\.claude-plugin\/plugin\.json/,
+    `${skillName} must not use forgeable project markers as executable authority`);
+  assert.ok(skill.includes('export CLAUDE_PLUGIN_ROOT="/absolute/path/to/reviewed/ECC"'),
+    `${skillName} must explain explicit checkout authorization`);
   assert.match(skill, new RegExp(`node "\\$ECC_ROOT/scripts/${escapeRegExp(script)}"`),
     `${skillName} must run the script from the resolved ECC root`);
   assert.doesNotMatch(skill, /\$\{CLAUDE_PLUGIN_ROOT:-\$PWD\}/,
@@ -143,11 +147,11 @@ function createFixture() {
 
 const fixture = createFixture();
 
-function runDetector({ pluginRoot, home, cwd }) {
+function runDetector({ pluginRoot, home, cwd, configRoot = '' }) {
   const block = blockContaining(
     readSkill('tdd-workflow'),
     'node "$ECC_ROOT/scripts/setup-package-manager.js" --detect');
-  const env = { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: '' };
+  const env = { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: configRoot };
   if (pluginRoot) {
     env.CLAUDE_PLUGIN_ROOT = pluginRoot;
   } else {
@@ -188,15 +192,24 @@ test('documented detector command falls back to the standalone install when CLAU
   assertDetectorRanInProject(result);
 });
 
-test('documented detector command falls back to an ECC checkout run from its root', () => {
+test('documented detector command uses an explicitly authorized ECC checkout from the project directory', () => {
   if (process.platform === 'win32') skip('executed fixture requires a POSIX shell');
   const result = runDetector({
+    pluginRoot: repoRoot,
+    home: fixture.emptyHome,
+    cwd: fixture.userProject,
+  });
+  assertDetectorRanInProject(result);
+});
+
+test('documented detector honors the configured standalone root with spaces', () => {
+  if (process.platform === 'win32') skip('executed fixture requires a POSIX shell');
+  assertDetectorRanInProject(runDetector({
     pluginRoot: null,
     home: fixture.emptyHome,
-    cwd: repoRoot,
-  });
-  assert.strictEqual(result.status, 0, `detector exited ${result.status}: ${result.stderr}`);
-  assert.match(result.stdout, /Package Manager Detection/);
+    configRoot: path.join(fixture.standaloneHome, '.claude'),
+    cwd: fixture.userProject,
+  }));
 });
 
 test('documented detector command fails loudly when no ECC root resolves', () => {
@@ -223,6 +236,35 @@ test('documented detector refuses a user-project lookalike script without an ECC
   assert.match(result.stderr, /ECC scripts not found/);
   assert.ok(!fs.existsSync(marker), 'the project lookalike helper must not execute');
 });
+
+for (const [skillName, script] of [
+  ['tdd-workflow', 'setup-package-manager.js'],
+  ['autonomous-loops', 'claw.js'],
+  ['dmux-workflows', 'orchestrate-worktrees.js'],
+]) {
+  for (const explicitMissingRoot of [false, true]) {
+    test(`${skillName} refuses both-marker project lookalikes${explicitMissingRoot ? ' even with an explicit missing root' : ''}`, () => {
+      if (process.platform === 'win32') skip('executed fixture requires a POSIX shell');
+      const cwd = fs.mkdtempSync(path.join(fixture.base, 'lookalike-project-'));
+      const ran = path.join(cwd, 'untrusted-helper-ran');
+      fs.mkdirSync(path.join(cwd, '.claude-plugin'));
+      fs.mkdirSync(path.join(cwd, 'scripts'));
+      fs.writeFileSync(path.join(cwd, '.claude-plugin', 'plugin.json'), '{"name":"ecc"}');
+      fs.writeFileSync(path.join(cwd, 'package.json'), '{"name":"ecc-lookalike"}');
+      fs.writeFileSync(path.join(cwd, 'scripts', script),
+        `require('fs').writeFileSync(${JSON.stringify(ran)}, 'untrusted helper executed');\n`);
+      const block = blockContaining(readSkill(skillName), `node "$ECC_ROOT/scripts/${script}"`);
+      const env = { ...process.env, HOME: fixture.emptyHome, CLAUDE_CONFIG_DIR: '' };
+      delete env.CLAUDE_PLUGIN_ROOT;
+      if (explicitMissingRoot) env.CLAUDE_PLUGIN_ROOT = path.join(fixture.base, 'explicit missing ECC');
+      const result = spawnSync('bash', ['-c', block], { cwd, env, encoding: 'utf8', timeout: 60000 });
+      assert.strictEqual(result.error, undefined);
+      assert.ok(!fs.existsSync(ran), 'both marker files caused untrusted project helper execution');
+      assert.strictEqual(result.status, 1, result.stderr || result.stdout);
+      assert.match(result.stderr, /ECC scripts not found/);
+    });
+  }
+}
 
 fs.rmSync(fixture.base, { recursive: true, force: true });
 

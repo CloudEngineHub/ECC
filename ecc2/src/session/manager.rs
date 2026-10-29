@@ -1157,7 +1157,7 @@ pub async fn rebalance_team_backlog(
                 use_worktree,
                 &repo_root,
                 &runner_program,
-                None,
+                cfg.default_agent_profile.as_deref(),
                 SessionGrouping::default(),
             )
             .await?;
@@ -8177,6 +8177,90 @@ mod tests {
         assert!(db.unread_task_handoffs_for_session("delegate", 10)?.is_empty());
 
         Ok(())
+    }
+
+    async fn assert_rebalanced_worker_profile(default_profile: Option<&str>) -> Result<()> {
+        let tempdir = TestDir::new("manager-rebalance-worker-profile")?;
+        let repo_root = tempdir.path().join("repo");
+        init_git_repo(&repo_root)?;
+        let mut cfg = build_config(tempdir.path());
+        cfg.max_parallel_worktrees = 0; // persist a queued worker without launching a model
+        cfg.max_parallel_sessions = 2;
+        cfg.default_agent_profile = default_profile.map(ToOwned::to_owned);
+        for (name, model) in [("pace_lead", "lead-model"), ("pace_dev", "dev-model")] {
+            cfg.agent_profiles.insert(
+                name.to_string(),
+                crate::config::AgentProfileConfig {
+                    agent: Some("claude".to_string()),
+                    model: Some(model.to_string()),
+                    ..Default::default()
+                },
+            );
+        }
+        let db = StateStore::open(&cfg.db_path)?;
+        let now = Utc::now();
+        for (id, state) in [
+            ("lead", SessionState::Running),
+            ("busy-worker", SessionState::Idle),
+        ] {
+            db.insert_session(&Session {
+                working_dir: repo_root.clone(),
+                ..build_session(id, state, now)
+            })?;
+        }
+        db.upsert_session_profile("lead", &cfg.resolve_agent_profile("pace_lead")?)?;
+        db.send_native_assignment_notice(
+            "lead", "busy-worker",
+            r#"{"task":"Existing assignment","context":"Assigned by lead [claude] | cwd /repo | spawned new delegate"}"#,
+        )?;
+        db.send_message(
+            "lead",
+            "busy-worker",
+            r#"{"task":"Independent implementation","context":"Delegated from lead"}"#,
+            "task_handoff",
+        )?;
+
+        let outcomes = rebalance_team_backlog(&db, &cfg, "lead", "claude", true, 1).await?;
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].action, AssignmentAction::Spawned);
+        assert_eq!(outcomes[0].from_session_id, "busy-worker");
+        assert_eq!(outcomes[0].task, "Independent implementation");
+        let worker_id = &outcomes[0].session_id;
+        assert_ne!(worker_id, "lead");
+        assert_ne!(worker_id, "busy-worker");
+        assert_eq!(
+            db.get_session(worker_id)?.unwrap().state,
+            SessionState::Pending
+        );
+        let profile = db
+            .get_session_profile(worker_id)?
+            .context("queued worker profile")?;
+        assert_eq!(profile.profile_name, default_profile.unwrap_or("pace_lead"));
+        assert_eq!(
+            profile.model.as_deref(),
+            Some(if default_profile.is_some() {
+                "dev-model"
+            } else {
+                "lead-model"
+            })
+        );
+        assert_eq!(
+            db.get_session_profile("lead")?.unwrap().profile_name,
+            "pace_lead"
+        );
+        assert_eq!(db.unread_task_handoff_count("busy-worker")?, 1);
+        assert_eq!(db.unread_task_handoff_count(worker_id)?, 1);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rebalance_team_backlog_uses_configured_profile_for_queued_worker() -> Result<()> {
+        assert_rebalanced_worker_profile(Some("pace_dev")).await
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rebalance_team_backlog_inherits_lead_without_default_worker_profile() -> Result<()> {
+        assert_rebalanced_worker_profile(None).await
     }
 
     #[tokio::test(flavor = "current_thread")]

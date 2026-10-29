@@ -147,13 +147,15 @@ function pickRootProjectId(entries, projectRoot) {
   return chosenId;
 }
 
-// Real paths collapse symlinks and Windows short/long directory spellings for
-// root comparison. Keep computeProjectId's Git spelling unchanged so its fallback
-// hash stays aligned with detect-project.sh. Unavailable roots cannot claim aliases.
+// Native real paths expand Windows 8.3 names; the JS realpath walker may retain
+// a non-symlink short spelling. Canonicalize only root comparison; keep the Git
+// spelling in computeProjectId's fallback hash for detect-project.sh parity.
+// Unavailable roots cannot claim aliases.
 function canonicalProjectRoot(root) {
   if (typeof root !== 'string' || !path.isAbsolute(root)) return '';
   try {
-    return fs.realpathSync(root);
+    const realpath = fs.realpathSync.native || fs.realpathSync;
+    return realpath(root);
   } catch {
     return '';
   }

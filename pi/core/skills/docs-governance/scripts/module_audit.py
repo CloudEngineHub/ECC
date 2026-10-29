@@ -1,5 +1,7 @@
 """Read-only evidence discovery for explicitly selected business modules."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol, TypeVar

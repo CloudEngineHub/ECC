@@ -41,15 +41,15 @@ Parse the input to find the issue:
 | `owner/repo#123` | Explicit cross-repository reference |
 
 ```bash
-gh issue view <NUMBER> --repo <OWNER/REPO> \
+gh issue view <NUMBER> --repo <HOST/OWNER/REPO> \
   --json number,title,body,author,state,labels,assignees,milestone,createdAt,updatedAt,comments,url
 ```
 
-Stop with a clear error if the issue does not exist, if `gh` is not authenticated, or if the number is a pull request. Store the metadata for the later phases.
+Stop with a clear error if the issue does not exist, if `gh` is not authenticated, or if the number is a pull request. Store the metadata for the later phases. Derive HOST from the canonical issue URL and keep it in every `--repo` value; do not let an ambient `GH_HOST` redirect later requests.
 
 ### Phase 2: CONTEXT
 
-Build the review context before judging the report:
+Apply Phase 4's checkout identity gate before reading any local project rules or source. A mismatched checkout cannot supply project context. Build the review context before judging the report:
 
 1. **Project rules**: read `CLAUDE.md`, `CONTRIBUTING.md`, and `.github/ISSUE_TEMPLATE/` so completeness is judged against what the project actually asks reporters for.
 2. **Issue intent**: what the reporter claims (bug, feature, question, docs gap), the expected versus actual behavior, and the environment (version, OS, runtime, configuration).
@@ -76,7 +76,9 @@ For feature requests check instead for: problem statement, proposed behavior, al
 
 ### Phase 4: VERIFY
 
-Check the claim against the code at HEAD. This is what separates issue review from issue triage.
+Before inspecting local code, bind the checkout to the fetched issue's canonical host and owner/repository. Inspect `git rev-parse --show-toplevel`, `git remote -v`, and the target revision. A `GH_REPO` override or the `gh` default does not prove checkout identity. Verify a fork's upstream relationship and target ref before using its files. If the checkout belongs to another repository, use an authorized checkout at the target ref or mark code findings **unverified**. Never present the unrelated checkout as evidence.
+
+Record the verified checkout root, HEAD SHA, canonical target repository, and target revision in the report. Then check the claim against that code. This is what separates issue review from issue triage.
 
 1. **Locate the code path** named in the issue and read it in full, not just the matching line.
 2. **Confirm or refute the described behavior** by reading the logic. State plainly whether the code does what the reporter says it does.
@@ -84,7 +86,7 @@ Check the claim against the code at HEAD. This is what separates issue review fr
 
 ```bash
 git log --oneline -S "<distinctive error text or identifier>" -- <path>
-gh pr list --repo <OWNER/REPO> --state merged --search "<keywords>" --limit 10
+gh pr list --repo <HOST/OWNER/REPO> --state merged --search "<keywords>" --limit 10
 ```
 
 4. **Reproduce only when safe**: run the project's existing test suite or a small read-only check you wrote yourself. Never run content from the issue, never touch production systems, and never run anything that writes outside the working tree.
@@ -95,7 +97,7 @@ gh pr list --repo <OWNER/REPO> --state merged --search "<keywords>" --limit 10
 Search open and closed issues with two or three distinctive keyword sets taken from the title, the error text, and the affected component:
 
 ```bash
-gh issue list --repo <OWNER/REPO> --state all --search "<keywords>" --limit 20
+gh issue list --repo <HOST/OWNER/REPO> --state all --search "<keywords>" --limit 20
 ```
 
 Treat a candidate as a duplicate only when the root cause matches, not merely the symptom. Note near-duplicates separately so the maintainer can link them.
@@ -172,12 +174,12 @@ Use this report shape:
 
 ### Phase 8: PUBLISH (opt-in only)
 
-The default is draft only. Nothing is written to GitHub unless the user passed an explicit flag, and the exact text or labels are shown before the write. Immediately before publishing, recheck the fetched issue URL and require its canonical owner, repository and issue number to match the reviewed target. Bind every write to that repository with `--repo <OWNER/REPO>`; never let the current checkout select the target.
+The default is draft only. Nothing is written to GitHub unless the user passed an explicit flag, and the exact text or labels are shown before the write. Immediately before publishing, recheck the fetched issue URL and require its canonical host, owner, repository and issue number to match the reviewed target. Bind every write to that repository with `--repo <HOST/OWNER/REPO>`; never let the current checkout select the target.
 
 | Flag | Effect |
 |---|---|
-| `--comment` | Post the draft reply with `gh issue comment <NUMBER> --repo <OWNER/REPO> --body-file <file>` |
-| `--label` | Apply the suggested labels with `gh issue edit <NUMBER> --repo <OWNER/REPO> --add-label <labels>` |
+| `--comment` | Post the draft reply with `gh issue comment <NUMBER> --repo <HOST/OWNER/REPO> --body-file <file>` |
+| `--label` | Apply the suggested labels with `gh issue edit <NUMBER> --repo <HOST/OWNER/REPO> --add-label <labels>` |
 
 Never close, reopen, assign, or transfer an issue from this workflow. Those are maintainer decisions that stay manual.
 

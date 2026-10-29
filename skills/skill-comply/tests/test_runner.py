@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -409,6 +410,10 @@ class TestSetupCommandConfinement:
         "cp -rt.GIT hooks",
         "tar -xf hooks.tar --directory=.git",
         "unzip 'payload*'",
+        "unzip -P pw payload.zip",
+        "unzip -P good.zip payload.zip",
+        "unzip -d",
+        "unzip -q",
     ])
     def test_bypass_is_not_executed(self, tmp_path: Path, command: str) -> None:
         assert _run_setup(tmp_path / "sandbox", command) == []
@@ -426,7 +431,6 @@ class TestSetupCommandConfinement:
         ("chmod +x run.sh", ["chmod", "+x", "run.sh"]),
         ("tar -czf src.tar.gz src", ["tar", "-czf", "src.tar.gz", "src"]),
         ("tar xzf src.tar.gz", ["tar", "xzf", "src.tar.gz"]),
-        ("unzip -o fixtures.zip -d data", ["unzip", "-o", "fixtures.zip", "-d", "data"]),
         ("npm init -y", ["npm", "init", "-y"]),
         (
             "npm install --save-dev jest@29 @types/node",
@@ -518,6 +522,69 @@ class TestArchiveMembers:
         with zipfile.ZipFile(sandbox / "f.zip", "w") as archive:
             archive.writestr("README.md", "restored")
         assert _sandboxed_setup_command(["unzip", "-o", "f.zip", "README.md"], sandbox) is not None
+
+
+class TestUnzipArchiveBinding:
+    """The extractor must open the exact existing ZIP whose members were checked."""
+
+    @staticmethod
+    def archive(path: Path, name: str = "data/value.txt") -> None:
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr(name, "checked fixture")
+
+    @pytest.mark.parametrize("flags", [[], ["-o"], ["-n"], ["-q"], ["-qq"], ["-j"], ["-oq"]])
+    def test_safe_archive_is_bound_to_its_checked_path(self, tmp_path: Path, flags: list[str]) -> None:
+        archive = tmp_path / "safe.zip"
+        self.archive(archive)
+        argv = _sandboxed_setup_command(["unzip", *flags, "safe.zip", "-d", "output"], tmp_path)
+        assert argv == ["unzip", *flags, str(archive.resolve()), "-d", "output"]
+        if not shutil.which("unzip"):
+            pytest.skip("unzip is unavailable")
+        subprocess.run(argv, cwd=tmp_path, check=True, capture_output=True)
+        target = "value.txt" if "-j" in flags else "data/value.txt"
+        assert (tmp_path / "output" / target).read_text() == "checked fixture"
+
+    def test_destination_before_archive_and_selected_member_are_preserved(self, tmp_path: Path) -> None:
+        archive = tmp_path / "safe.zip"
+        self.archive(archive)
+        argv = _sandboxed_setup_command(["unzip", "-d", "output", "-o", "safe.zip", "data/value.txt"], tmp_path)
+        assert argv == ["unzip", "-d", "output", "-o", str(archive.resolve()), "data/value.txt"]
+        if not shutil.which("unzip"):
+            pytest.skip("unzip is unavailable")
+        subprocess.run(argv, cwd=tmp_path, check=True, capture_output=True)
+        assert (tmp_path / "output/data/value.txt").read_text() == "checked fixture"
+
+    @pytest.mark.parametrize("member", ["data/value.txt", ".git/hooks/post-commit"])
+    def test_missing_archive_never_uses_implicit_zip_suffix(self, tmp_path: Path, member: str) -> None:
+        self.archive(tmp_path / "payload.zip", member)
+        assert _sandboxed_setup_command(["unzip", "-o", "payload"], tmp_path) is None
+
+    def test_existing_extensionless_zip_is_allowed_without_suffix_lookup(self, tmp_path: Path) -> None:
+        archive = tmp_path / "payload"
+        self.archive(archive)
+        self.archive(tmp_path / "payload.zip", ".git/hooks/post-commit")
+        argv = _sandboxed_setup_command(["unzip", "-o", "payload"], tmp_path)
+        assert argv == ["unzip", "-o", str(archive.resolve())]
+        if not shutil.which("unzip"):
+            pytest.skip("unzip is unavailable")
+        subprocess.run(argv, cwd=tmp_path, check=True, capture_output=True)
+        assert (tmp_path / "data/value.txt").read_text() == "checked fixture"
+        assert not (tmp_path / ".git/hooks/post-commit").exists()
+
+    @pytest.mark.parametrize("password", ["pw", "good.zip"])
+    def test_password_options_cannot_hide_the_real_archive(self, tmp_path: Path, password: str) -> None:
+        self.archive(tmp_path / "good.zip")
+        self.archive(tmp_path / "payload.zip", ".git/hooks/post-commit")
+        assert _sandboxed_setup_command(["unzip", "-P", password, "payload.zip"], tmp_path) is None
+
+    @pytest.mark.parametrize("args", [
+        [], ["-q"], ["-d"], ["safe.zip", "-d"], ["-d", "-q", "safe.zip"],
+        ["-Ppw", "safe.zip"], ["-Z", "safe.zip"], ["-T", "safe.zip"],
+        ["-doutput", "safe.zip"], ["--unrecognized", "safe.zip"], ["safe*"],
+    ])
+    def test_missing_or_ambiguous_arguments_are_not_executed(self, tmp_path: Path, args: list[str]) -> None:
+        self.archive(tmp_path / "safe.zip")
+        assert _sandboxed_setup_command(["unzip", *args], tmp_path) is None
 
 
 class TestSandboxBaseOwnership:
