@@ -133,7 +133,7 @@ async function run() {
     });
 
     await test('claim rejects unadmitted needs-review, blocked, hold, and unowned running items', async () => {
-      const statuses = ['needs-review', 'blocked', 'hold', 'running'];
+      const statuses = ['needs-review', 'blocked', 'hold', 'running', 'in-progress'];
       const setup = await createStateStore({ dbPath });
       try {
         for (const status of statuses) {
@@ -159,6 +159,19 @@ async function run() {
       assert.strictEqual(payload.claimed, true);
       assert.strictEqual(payload.item.status, 'running');
       assert.strictEqual(payload.item.owner, 'approved-worker');
+    });
+
+    await test('repeat claim by the same owner preserves legacy in-progress idempotence', async () => {
+      const setup = await createStateStore({ dbPath });
+      try {
+        setup.upsertWorkItem({ id: 'wi-legacy-in-progress', source: 'manual', title: 'Legacy active work', status: 'in-progress', owner: 'legacy-worker', metadata: {} });
+      } finally { setup.close(); }
+      const before = await createStateStore({ dbPath });
+      let original;
+      try { original = before.getWorkItemById('wi-legacy-in-progress'); } finally { before.close(); }
+      const result = runClaim(dbPath, ['wi-legacy-in-progress', '--owner', 'legacy-worker', '--as', 'agent']);
+      assert.strictEqual(result.status, 0, result.stderr);
+      assert.deepStrictEqual(JSON.parse(result.stdout).item, original);
     });
 
     await test('repeat claim by the same owner is idempotent', async () => {
