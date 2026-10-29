@@ -443,17 +443,29 @@ test('resolveProjectContext compares native long paths when legacy realpath reta
 
 test('resolveProjectContext retains root comparison when the native realpath API is unavailable', () => {
   const root = createTempDir();
-  const originalNative = fs.realpathSync.native;
+  const originalRealpath = fs.realpathSync;
   try {
     const storage = path.join(root, 'store');
     const repo = path.join(root, 'repo');
     initRepo(repo, 'https://github.com/owner/repo.git');
-    writeRegistry(storage, [{ id: 'registered-project', root: fs.realpathSync(repo) }]);
-    fs.realpathSync.native = undefined;
+    // Use one Git spelling for both inputs. Legacy realpath need not expand
+    // 8.3 aliases; this case verifies API fallback, not native alias support.
+    const gitRoot = spawnSync('git', ['-C', repo, 'rev-parse', '--show-toplevel'], {
+      encoding: 'utf8',
+    });
+    assert.strictEqual(gitRoot.status, 0, gitRoot.stderr);
+    writeRegistry(storage, [{ id: 'registered-project', root: gitRoot.stdout.trim() }]);
+    let fallbackCalls = 0;
+    fs.realpathSync = (...args) => {
+      fallbackCalls += 1;
+      return originalRealpath(...args);
+    };
+    assert.strictEqual(fs.realpathSync.native, undefined);
     const { result } = resolveIn(storage, repo);
     assert.strictEqual(result.projectId, 'registered-project');
+    assert.ok(fallbackCalls >= 2, 'both project and registry roots must use the fallback');
   } finally {
-    fs.realpathSync.native = originalNative;
+    fs.realpathSync = originalRealpath;
     cleanup(root);
   }
 });
