@@ -3019,6 +3019,14 @@ function runTests() {
     passed++;
   else failed++;
 
+  if (
+    test("denies rm -rf in a (...) group after an escaped apostrophe in $'...'", () => {
+      expectDestructiveDeny("echo $'it\\'s'; (rm -rf /tmp/junk)", 'ANSI-C string before subshell');
+    })
+  )
+    passed++;
+  else failed++;
+
   // Negative cases — literals and non-destructive commands must NOT
   // be promoted to destructive by the new grouping-body walker.
 

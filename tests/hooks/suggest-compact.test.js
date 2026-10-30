@@ -41,7 +41,12 @@ function runCompact(envOverrides = {}) {
  * Returns { code, stdout, stderr }.
  */
 function runCompactWithInput(input, envOverrides = {}) {
-  const env = { ...process.env, ...envOverrides };
+  const env = {
+    ...process.env,
+    ECC_CONTEXT_WINDOW_TOKENS: '',
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: '',
+    ...envOverrides,
+  };
   const result = spawnSync('node', [compactScript], {
     encoding: 'utf8',
     input: typeof input === 'string' ? input : JSON.stringify(input),
@@ -830,10 +835,16 @@ function runTests() {
     const ctx = createContextContext();
     const transcript = writeTranscriptFixture(230000, 'claude-opus-4-5[1m]');
     try {
-      const silent = runCompactWithInput({ session_id: ctx.sessionId, transcript_path: transcript });
+      const silent = runCompactWithInput(
+        { session_id: ctx.sessionId, transcript_path: transcript },
+        { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '786432' }
+      );
       assert.strictEqual(silent.stdout.trim(), '', `230k on a 1M window must stay silent. Got: "${silent.stdout}"`);
       writeTranscriptTokens(transcript, 260000, 'claude-opus-4-5[1m]');
-      const fired = runCompactWithInput({ session_id: ctx.sessionId, transcript_path: transcript });
+      const fired = runCompactWithInput(
+        { session_id: ctx.sessionId, transcript_path: transcript },
+        { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '786432' }
+      );
       assert.ok(fired.stdout.includes('26% of 1M window'), `260k on a 1M window should fire. Got: "${fired.stdout}"`);
     } finally {
       try { fs.unlinkSync(transcript); } catch (_err) { /* ignore */ }
@@ -846,7 +857,10 @@ function runTests() {
     const ctx = createContextContext();
     const transcript = writeTranscriptFixture(230000, 'claude-opus-4-5');
     try {
-      const result = runCompactWithInput({ session_id: ctx.sessionId, transcript_path: transcript });
+      const result = runCompactWithInput(
+        { session_id: ctx.sessionId, transcript_path: transcript },
+        { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '786432' }
+      );
       // 230k would exceed the 160k standard threshold, but the observed size
       // implies a 1M window whose 250k default threshold is not reached yet.
       assert.strictEqual(result.stdout.trim(), '', `Expected 1M-window inference to keep run silent. Got: "${result.stdout}"`);
