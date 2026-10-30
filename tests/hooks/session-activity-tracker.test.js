@@ -419,9 +419,10 @@ function runTests() {
   }) ? passed++ : failed++);
 
   for (const [label, eccId, payloadId, legacyId, expectedId] of [
-    ['native ECC identity wins over the distinct harness payload', 'ecc-native-owner', 'claude-conversation', 'stale-parent', 'ecc-native-owner'],
+    ['harness payload keeps its identity despite an inherited ECC environment', 'ecc-native-owner', 'claude-conversation', 'stale-parent', 'claude-conversation'],
     ['standalone payload wins over a stale legacy environment', '', 'claude-standalone', 'stale-parent', 'claude-standalone'],
     ['invalid ECC identity falls back to the payload', '../invalid-owner', 'claude-standalone', 'stale-parent', 'claude-standalone'],
+    ['invalid payload falls back to a valid ECC environment', 'ecc-native-owner', 'bad\\payload', 'stale-parent', 'ecc-native-owner'],
     ['invalid ECC and payload identities fall back to the legacy environment', 'bad/owner', 'bad\\payload', 'claude-legacy', 'claude-legacy'],
   ]) {
     (test(`actual activity producer: ${label}`, () => {
@@ -449,6 +450,29 @@ function runTests() {
       }
     }) ? passed++ : failed++);
   }
+
+  (test('concurrent payload sessions stay separate under one inherited ECC environment', () => {
+    const tmpHome = makeTempDir();
+    try {
+      const env = {
+        ...withTempHome(tmpHome), ECC_AGENT_DATA_HOME: path.join(tmpHome, '.claude'),
+        CLAUDE_CONFIG_DIR: path.join(tmpHome, '.claude'),
+        ECC_SESSION_ID: 'registered-parent', CLAUDE_SESSION_ID: 'inherited-parent',
+      };
+      for (const sessionId of ['provider-session-a', 'provider-session-b']) {
+        const result = runScript({
+          hook_event_name: 'PostToolUse', session_id: sessionId,
+          tool_name: 'Read', tool_input: { file_path: `${sessionId}.ts` },
+        }, env);
+        assert.strictEqual(result.code, 0, result.stderr);
+      }
+      const rows = readMetricRows(tmpHome);
+      assert.deepStrictEqual(rows.map(row => row.session_id), ['provider-session-a', 'provider-session-b']);
+      assert.ok(rows.every(row => row.session_id !== 'registered-parent'));
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  }) ? passed++ : failed++);
 
   (test('reads session_id from stdin JSON when no session env var is set', () => {
     // Claude Code does not set CLAUDE_SESSION_ID for hook subprocesses in

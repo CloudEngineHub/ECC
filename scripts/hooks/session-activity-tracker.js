@@ -572,14 +572,14 @@ function buildActivityRow(input, env = process.env) {
   }
 
   const toolName = String(input?.tool_name || '').trim();
-  // Native ECC workers set ECC_SESSION_ID to their registered session ID.
-  // This feed belongs to that ECC session, even when the harness payload
-  // carries a different conversation ID. Standalone hooks use their payload
-  // ID before the legacy Claude environment fallback. Sanitize each candidate
-  // separately so an invalid native ID cannot hide a usable payload ID.
+  // The payload identifies the actual harness conversation. Preserve it ahead
+  // of inherited environment IDs, which may belong to a parent or concurrent
+  // session. Correlating that conversation with a native ECC session requires
+  // an explicit binding, not an ownership guess from the environment.
+  // Sanitize candidates separately so invalid values retain safe fallbacks.
   const sessionId =
-    sanitizeSessionId(env.ECC_SESSION_ID) ||
     sanitizeSessionId(input?.session_id) ||
+    sanitizeSessionId(env.ECC_SESSION_ID) ||
     sanitizeSessionId(env.CLAUDE_SESSION_ID) ||
     '';
   if (!toolName || !sessionId) {
