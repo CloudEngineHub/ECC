@@ -40,6 +40,18 @@ export namespace ConfigExample {
   }
 }
 
+export namespace AssertionExample {
+  export function assertIsStringArray(value: unknown): asserts value is string[] {
+    if (!Array.isArray(value)) {
+      throw new TypeError('Expected an array of strings');
+    }
+    // Iteration visits sparse positions as undefined instead of skipping them.
+    for (const item of value) {
+      if (typeof item !== 'string') throw new TypeError('Expected an array of strings');
+    }
+  }
+}
+
 export namespace UserExample {
   export type User = { id: string; email: string };
 
@@ -53,10 +65,17 @@ export namespace UserExample {
     );
   }
 
+  export function assertUserId(userId: string): void {
+    if (typeof userId !== 'string' || userId.length === 0 || /[^A-Za-z0-9_-]/.test(userId)) {
+      throw new TypeError('Expected a user ID using letters, digits, "_" or "-"');
+    }
+  }
+
   export async function loadUser(
     userId: string,
     fetchJson: (url: string) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>,
   ): Promise<User> {
+    assertUserId(userId);
     const response = await fetchJson(`/users/${userId}`);
     if (!response.ok) {
       throw new Error(`Failed to load user ${userId}: ${response.status}`);

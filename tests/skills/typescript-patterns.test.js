@@ -77,7 +77,7 @@ test('actual fixture compiles with the recommended index-signature baseline', ()
   assert.deepStrictEqual(diagnostics.map(d => ts.flattenDiagnosticMessageText(d.messageText, '\n')), []);
 });
 
-test('compiled config and concurrency bodies match the published examples', () => {
+test('compiled validation and concurrency bodies match the published examples', () => {
   const printer = ts.createPrinter({ removeComments: true });
   function bodies(source, filename) {
     const file = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true);
@@ -94,9 +94,10 @@ test('compiled config and concurrency bodies match the published examples', () =
   const documented = [...skill.matchAll(/```typescript\n([\s\S]*?)```/g)].map(match => match[1]).join('\n');
   const docs = bodies(documented, 'skill.ts');
   const fixtures = bodies(fs.readFileSync(fixturePath, 'utf8'), fixturePath);
-  for (const name of ['parseConfig', 'mapWithConcurrency']) {
+  for (const name of ['parseConfig', 'assertIsStringArray', 'assertUserId', 'isUser', 'loadUser', 'mapWithConcurrency']) {
     assert.ok(docs.has(name), `${name} is missing from the skill`);
-    assert.strictEqual(fixtures.get(name), docs.get(name), `${name} fixture drifted from the published example`);
+    const fixtureBody = name === 'loadUser' ? fixtures.get(name).replace(/\bfetchJson\b/g, 'fetch') : fixtures.get(name);
+    assert.strictEqual(fixtureBody, docs.get(name), `${name} fixture drifted from the published example`);
   }
 });
 
@@ -107,6 +108,7 @@ const fixtureExports = {};
 // Only checked-in fixture code is evaluated; no filesystem or network access.
 new Function('exports', emitted)(fixtureExports);
 const { parseConfig } = fixtureExports.ConfigExample;
+const { assertIsStringArray } = fixtureExports.AssertionExample;
 const { loadUser } = fixtureExports.UserExample;
 const { mapWithConcurrency } = fixtureExports.ConcurrencyExample;
 
@@ -134,11 +136,53 @@ test('parseConfig rejects zero and negative values', () => {
   assert.throws(() => parseConfig({ timeout: 1.5, retries: 3 }), TypeError);
 });
 
+// ---- assertIsStringArray -------------------------------------------------
+
+test('assertIsStringArray rejects wholly and partially sparse arrays', () => {
+  assert.throws(() => assertIsStringArray(new Array(3)), TypeError);
+  const partial = ['first', 'second'];
+  delete partial[1];
+  assert.throws(() => assertIsStringArray(partial), TypeError);
+});
+
+test('assertIsStringArray accepts dense strings and rejects present non-strings', () => {
+  assert.doesNotThrow(() => assertIsStringArray([]));
+  assert.doesNotThrow(() => assertIsStringArray(['', 'hello']));
+  for (const invalid of [['hello', undefined], ['hello', 1], null, 'hello']) {
+    assert.throws(() => assertIsStringArray(invalid), TypeError);
+  }
+});
+
 // ---- loadUser / isUser ----------------------------------------------------
 
 test('loadUser returns a valid user', async () => {
   const user = await loadUser('u_1', okFetch({ id: 'u_1', email: 'a@example.com' }));
   assert.deepStrictEqual(user, { id: 'u_1', email: 'a@example.com' });
+});
+
+test('loadUser rejects invalid identifiers without making a request', async () => {
+  const invalidIds = ['', '../profile', '..', 'a/b', 'a\\b', '%2e%2e', 'u_1?admin=1', 'u_1#bio', 'u_1\n', 'u_\u{1F600}', 1, null];
+  for (const userId of invalidIds) {
+    let requests = 0;
+    const fetchJson = async () => {
+      requests += 1;
+      return { ok: true, status: 200, json: async () => ({ id: 'u_1', email: 'a@example.com' }) };
+    };
+    await assert.rejects(loadUser(userId, fetchJson), TypeError);
+    assert.strictEqual(requests, 0, `request made for invalid ID ${JSON.stringify(userId)}`);
+  }
+});
+
+test('loadUser preserves valid identifiers as one endpoint segment', async () => {
+  for (const userId of ['u_1', 'User-123', '42']) {
+    let requested;
+    const user = await loadUser(userId, async url => {
+      requested = url;
+      return { ok: true, status: 200, json: async () => ({ id: userId, email: 'a@example.com' }) };
+    });
+    assert.strictEqual(requested, `/users/${userId}`);
+    assert.strictEqual(user.id, userId);
+  }
 });
 
 test('loadUser rejects a response missing email', async () => {
