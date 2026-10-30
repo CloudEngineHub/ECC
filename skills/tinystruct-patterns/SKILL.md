@@ -136,11 +136,22 @@ public class MyService extends AbstractApplication {
 ```
 
 ### HTTP Mode Disambiguation (login)
+
+The limits below are example application policy measured in UTF-16 code units, not tinystruct defaults. Align them with your authentication service. Reject blank credentials without trimming or otherwise changing the values passed to authentication.
+
 ```java
 @Action(value = "login", mode = Mode.HTTP_POST)
 public String doLogin(Request<?, ?> request) throws ApplicationException {
     String username = request.getParameter("username");
     String password = request.getParameter("password");
+
+    final int maxUsernameLength = 256;
+    final int maxPasswordLength = 1024;
+    if (username == null || password == null
+            || username.length() > maxUsernameLength || password.length() > maxPasswordLength
+            || username.isBlank() || password.isBlank()) {
+        throw new ApplicationException("Invalid credentials");
+    }
 
     // AuthService is your application's own class, not part of tinystruct
     String userId = AuthService.getInstance().authenticate(username, password); // null on failure

@@ -136,11 +136,22 @@ public class MyService extends AbstractApplication {
 ```
 
 ### HTTPモード分岐（login）
+
+以下の長さ制限は UTF-16 コード単位で数えるアプリケーション側の設定例であり、tinystruct のデフォルトではありません。認証サービスの方針に合わせてください。空白だけの認証情報は拒否しますが、認証に渡す値をトリミングしたり変更したりしません。
+
 ```java
 @Action(value = "login", mode = Mode.HTTP_POST)
 public String doLogin(Request<?, ?> request) throws ApplicationException {
     String username = request.getParameter("username");
     String password = request.getParameter("password");
+
+    final int maxUsernameLength = 256;
+    final int maxPasswordLength = 1024;
+    if (username == null || password == null
+            || username.length() > maxUsernameLength || password.length() > maxPasswordLength
+            || username.isBlank() || password.isBlank()) {
+        throw new ApplicationException("Invalid credentials");
+    }
 
     // AuthService はアプリケーション独自のクラスであり、tinystruct の一部ではない
     String userId = AuthService.getInstance().authenticate(username, password); // 失敗時は null
