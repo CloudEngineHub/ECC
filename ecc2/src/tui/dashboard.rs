@@ -13057,7 +13057,9 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     #[test]
     fn refresh_preserves_selected_session_by_id() -> Result<()> {
-        let db_path = std::env::temp_dir().join(format!("ecc2-dashboard-{}.db", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("ecc2-dashboard-{}", Uuid::new_v4()));
+        fs::create_dir(&root)?;
+        let db_path = root.join("state.db");
         let db = StateStore::open(&db_path)?;
         let now = Utc::now();
 
@@ -13093,13 +13095,18 @@ diff --git a/src/lib.rs b/src/lib.rs
             metrics: SessionMetrics::default(),
         })?;
 
-        let mut dashboard = Dashboard::new(db, Config::default());
+        let cfg = Config {
+            db_path: db_path.clone(),
+            ..Config::default()
+        };
+        let mut dashboard = Dashboard::new(db, cfg);
         dashboard.selected_session = 1;
         dashboard.sync_selection();
         dashboard.refresh();
 
         assert_eq!(dashboard.selected_session_id(), Some("older"));
-        let _ = std::fs::remove_file(db_path);
+        drop(dashboard);
+        fs::remove_dir_all(root)?;
         Ok(())
     }
 
