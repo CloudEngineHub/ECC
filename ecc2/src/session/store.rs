@@ -2036,6 +2036,9 @@ impl StateStore {
             .into_iter()
             .map(|session| (session.id, session.task))
             .collect::<HashMap<_, _>>();
+        let mut persisted_event_owner = self
+            .conn
+            .prepare("SELECT session_id FROM tool_log WHERE hook_event_id = ?1")?;
 
         for line in reader.lines() {
             let line = line?;
@@ -2061,6 +2064,15 @@ impl StateStore {
             // Do this before deduplication: an unknown session must not
             // reserve an event id for an ECC2-owned session.
             if !session_tasks.contains_key(&row.session_id) {
+                continue;
+            }
+            // A session registered after an earlier sync must not steal an
+            // event ID already persisted for another session, or suppress the
+            // owner's later row when this feed is replayed.
+            let persisted_owner = persisted_event_owner
+                .query_row([&row.id], |record| record.get::<_, String>(0))
+                .optional()?;
+            if persisted_owner.is_some_and(|owner| owner != row.session_id) {
                 continue;
             }
             if !seen_event_ids.insert(row.id.clone()) {
@@ -6302,8 +6314,27 @@ mod tests {
         assert_eq!(total_logs, 1);
         assert!(db.get_session("standalone-claude")?.is_none());
 
-        // Retain an orphan event until the session is legitimately registered.
-        // The importer must not fabricate a session or permanently discard it.
+        // Registration must not let the first row steal an event already
+        // persisted for another session while this same feed remains intact.
+        let registered_later = Session {
+            id: "standalone-claude".to_string(),
+            ..known
+        };
+        db.insert_session(&registered_later)?;
+        db.sync_tool_activity_metrics(&metrics_path)?;
+        db.sync_tool_activity_metrics(&metrics_path)?;
+        let owner = db.get_session("ecc-owned")?.expect("persisted event owner");
+        assert_eq!(owner.metrics.tool_calls, 1);
+        assert_eq!(owner.metrics.files_changed, 1);
+        let conflicting = db
+            .get_session("standalone-claude")?
+            .expect("registered later");
+        assert_eq!(conflicting.metrics.tool_calls, 0);
+        assert_eq!(conflicting.metrics.files_changed, 0);
+        assert_eq!(db.query_tool_logs("ecc-owned", 1, 10)?.total, 1);
+        assert_eq!(db.query_tool_logs("standalone-claude", 1, 10)?.total, 0);
+
+        // A distinct event for the newly registered session still imports.
         fs::write(
             &metrics_path,
             concat!(
@@ -6312,11 +6343,6 @@ mod tests {
             ),
         )?;
         db.sync_tool_activity_metrics(&metrics_path)?;
-        let registered_later = Session {
-            id: "standalone-claude".to_string(),
-            ..known
-        };
-        db.insert_session(&registered_later)?;
         db.sync_tool_activity_metrics(&metrics_path)?;
         db.sync_tool_activity_metrics(&metrics_path)?;
         let later = db
