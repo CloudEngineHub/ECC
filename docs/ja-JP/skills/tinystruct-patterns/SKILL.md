@@ -12,14 +12,14 @@ metadata:
 
 ## コア原則
 
-**CLI と HTTP は等しい市民（equal citizens）です。** トランスポート中立な `@Action`（`mode` を指定しないもの、つまり `Mode.DEFAULT`）は、変更なしでターミナルとWebブラウザの両方から実行できます。この「デュアルモード」対応能力が tinystruct のコア設計思想です。トランスポート固有のモード（`Mode.CLI`、`Mode.HTTP_GET`、`Mode.HTTP_POST` など）を持つアクションは意図的にそのトランスポートに限定されており、もう一方から呼び出すとフレームワークは "The action is not allowed to be executed." で拒否します。
+**CLI と HTTP は等しい市民（equal citizens）です。** トランスポート中立な `@Action` は `Mode.DEFAULT` を使用するか `mode` を省略し、HTTP専用の依存関係を持たないものです。このようなアクションはターミナルとWebブラウザの両方から実行できます。`Mode.DEFAULT` はトランスポートの制限をなくすだけで、HTTPに依存するメソッドをCLI対応にするものではありません。`Request` と `Response` の引数はHTTPコンテキスト属性から供給されるため、通常のCLI呼び出しのようにその属性がなければ null のままです。共有ロジックはHTTPオブジェクト、セッション、アップロードに依存させず、必要に応じてトランスポート固有のエントリポイントから呼び出してください。この「デュアルモード」対応能力が tinystruct のコア設計思想です。トランスポート固有のモード（`Mode.CLI`、`Mode.HTTP_GET`、`Mode.HTTP_POST` など）を持つアクションは意図的にそのトランスポートに限定されており、もう一方から呼び出すとフレームワークは "The action is not allowed to be executed." で拒否します。
 
 ## 主要な開発ツール：`bin/dispatcher`
 
 **`bin/dispatcher` は tinystruct アプリケーションを開発・実行・テスト・デバッグするためのデフォルトかつ最優先のツールです — IDE の実行構成、手書きの `main()`、curl、ブラウザよりも先にこれを使ってください。** トランスポート中立な `@Action` メソッドは設計上デュアルモードであるため、`bin/dispatcher` を使うことでサーバーやブラウザを必要とせず、ターミナルから直接ルーティング・引数バインディング・ビジネスロジックを、最速のフィードバックループで検証できます。HTTPメソッドに限定されたアクション（`Mode.HTTP_POST`、`Mode.HTTP_GET` など）は `bin/dispatcher` からは呼び出せないため、起動中のサーバーに対してHTTPクライアントでテストしてください。
 
 ```bash
-# @Action を直接実行 - 新しいアクションが動作するか確認する最速の方法
+# CLI対応の @Action を直接実行して新しいアクションを検証する
 # （クラスをインポートする必要があります。--import または application.properties の default.import.applications を参照してください）
 bin/dispatcher greet/James --import com.example.MyService
 bin/dispatcher echo --words "Praise the Lord"
@@ -106,7 +106,7 @@ bin/dispatcher.cmd text eol=crlf
 
 ## 動作の仕組み
 
-tinystruct フレームワークは、`@Action` でアノテーションされたメソッドをルーティング可能なエンドポイントとして扱います。`mode` を指定しない場合はターミナルとWeb環境の両方から到達でき、`mode = Mode.CLI` や `Mode.HTTP_POST` などのHTTPモードを指定した場合は、そのトランスポートからのみ到達できます。アプリケーションは `AbstractApplication` を拡張することで作成され、`init()` などのコアライフサイクルフックとリクエスト `Context` へのアクセスが提供されます。
+tinystruct フレームワークは、`@Action` でアノテーションされたメソッドをルーティング可能なエンドポイントとして扱います。`mode` を指定しない場合、ディスパッチは単一のトランスポートに制限されませんが、引数と実装は実行環境に対応している必要があります。通常のCLI呼び出しではHTTPの `Request` や `Response` オブジェクトは供給されません。`mode = Mode.CLI` や `Mode.HTTP_POST` などのHTTPモードを指定した場合、ディスパッチはそのトランスポートに限定されます。アプリケーションは `AbstractApplication` を拡張することで作成され、`init()` などのコアライフサイクルフックとリクエスト `Context` へのアクセスが提供されます。
 
 ルーティングは `ActionRegistry` によって処理され、パスセグメントをメソッド引数に自動的にマッピングして依存関係を注入します。データのみのサービスでは、ゼロ依存のフットプリントを維持するために、JSONシリアライゼーションにネイティブの `Builder` と `Builders` コンポーネントを使用すべきです。データベース層は `@Table`/`@Column` アノテーションまたは XML マッピングファイルでテーブルにマッピングされた `AbstractData` POJO を使用し、外部 ORM ライブラリなしで CRUD 操作を行います。不足しているテーブルは `database.autocreate=true` で自動的に作成できます。
 
@@ -389,7 +389,7 @@ String port = this.getConfiguration("server.port");
 | 実行時にアクションが見つからない | クラスが `--import` でインポートされているか、`application.properties` に列挙されているか確認する。 |
 | CLI引数が認識されない | `--key value` の形で渡し、`getContext().getAttribute("--key")` でアクセスする。 |
 | 同じパスの2つのメソッドで、意図しない方が呼ばれる | 明示的な `mode`（例：`HTTP_GET` と `HTTP_POST`）を設定して区別する。 |
-| `bin/dispatcher` が "The action is not allowed to be executed." で失敗する | そのアクションはHTTP固有のモードを持っており、CLIからは呼び出せない。HTTPでテストするか、デュアルモードにしたい場合は `mode` を外す。 |
+| `bin/dispatcher` が "The action is not allowed to be executed." で失敗する | そのアクションはHTTP固有のモードを持っており、CLIからは呼び出せない。HTTPでテストする。両方に対応するには、まずHTTP専用の依存関係を共有ロジックから分離し、CLI対応のエントリポイントに `Mode.DEFAULT` を使用する。 |
 | ファイルが存在するのに静的ファイルが404を返す | `server.static.dirs` / `server.static.dir`（デフォルト `static/`）のみが配信される。隠しファイル、`..` を含むパス、プロジェクトルート直下のファイルは常に拒否される。 |
 | ログファイルが書き出されない | `FileHandler` はオプトイン：`handlers` に `java.util.logging.FileHandler` を追加する。`java.util.logging.FileHandler.pattern` を設定しない場合、ファイルは `%h/java%u.log`（ホームディレクトリ）に作成される。 |
 | `FINE` / デバッグメッセージが表示されない | 両方のゲートが許可する必要がある：`logging.level=FINE`（または `org.tinystruct.level=FINE` のようなパッケージ単位の上書き）を設定し、ハンドラの `.level` がそれより厳しくないことを確認する。 |
