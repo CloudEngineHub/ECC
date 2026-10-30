@@ -60,7 +60,11 @@ function runScript(input, envOverrides = {}, options = {}) {
     encoding: 'utf8',
     input: inputStr,
     timeout: 10000,
-    env: { ...process.env, ...ISOLATED_HOME_ENV, ...envOverrides },
+    env: {
+      ...process.env, ...ISOLATED_HOME_ENV,
+      ECC_SESSION_ID: '', CLAUDE_SESSION_ID: '',
+      ...envOverrides,
+    },
     cwd: options.cwd,
   });
   return { code: result.status || 0, stdout: result.stdout || '', stderr: result.stderr || '' };
@@ -412,6 +416,62 @@ function runTests() {
     assert.ok(!row.input_params_json.includes('topsecret'));
 
     fs.rmSync(tmpHome, { recursive: true, force: true });
+  }) ? passed++ : failed++);
+
+  for (const [label, eccId, payloadId, legacyId, expectedId] of [
+    ['harness payload keeps its identity despite an inherited ECC environment', 'ecc-native-owner', 'claude-conversation', 'stale-parent', 'claude-conversation'],
+    ['standalone payload wins over a stale legacy environment', '', 'claude-standalone', 'stale-parent', 'claude-standalone'],
+    ['invalid ECC identity falls back to the payload', '../invalid-owner', 'claude-standalone', 'stale-parent', 'claude-standalone'],
+    ['invalid payload falls back to a valid ECC environment', 'ecc-native-owner', 'bad\\payload', 'stale-parent', 'ecc-native-owner'],
+    ['invalid ECC and payload identities fall back to the legacy environment', 'bad/owner', 'bad\\payload', 'claude-legacy', 'claude-legacy'],
+  ]) {
+    (test(`actual activity producer: ${label}`, () => {
+      const tmpHome = makeTempDir();
+      try {
+        const input = {
+          hook_event_name: 'PostToolUse', session_id: payloadId,
+          tool_name: 'Read', tool_input: { file_path: 'src/identity.ts' },
+        };
+        const result = runScript(input, {
+          ...withTempHome(tmpHome),
+          ECC_AGENT_DATA_HOME: path.join(tmpHome, '.claude'),
+          CLAUDE_CONFIG_DIR: path.join(tmpHome, '.claude'),
+          ECC_SESSION_ID: eccId, CLAUDE_SESSION_ID: legacyId,
+        });
+        assert.strictEqual(result.code, 0, result.stderr);
+        assert.strictEqual(result.stdout, JSON.stringify(input));
+        const rows = readMetricRows(tmpHome);
+        assert.strictEqual(rows.length, 1);
+        assert.strictEqual(rows[0].session_id, expectedId);
+        assert.strictEqual(rows[0].tool_name, 'Read');
+        assert.deepStrictEqual(rows[0].file_paths, ['src/identity.ts']);
+      } finally {
+        fs.rmSync(tmpHome, { recursive: true, force: true });
+      }
+    }) ? passed++ : failed++);
+  }
+
+  (test('concurrent payload sessions stay separate under one inherited ECC environment', () => {
+    const tmpHome = makeTempDir();
+    try {
+      const env = {
+        ...withTempHome(tmpHome), ECC_AGENT_DATA_HOME: path.join(tmpHome, '.claude'),
+        CLAUDE_CONFIG_DIR: path.join(tmpHome, '.claude'),
+        ECC_SESSION_ID: 'registered-parent', CLAUDE_SESSION_ID: 'inherited-parent',
+      };
+      for (const sessionId of ['provider-session-a', 'provider-session-b']) {
+        const result = runScript({
+          hook_event_name: 'PostToolUse', session_id: sessionId,
+          tool_name: 'Read', tool_input: { file_path: `${sessionId}.ts` },
+        }, env);
+        assert.strictEqual(result.code, 0, result.stderr);
+      }
+      const rows = readMetricRows(tmpHome);
+      assert.deepStrictEqual(rows.map(row => row.session_id), ['provider-session-a', 'provider-session-b']);
+      assert.ok(rows.every(row => row.session_id !== 'registered-parent'));
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
   }) ? passed++ : failed++);
 
   (test('reads session_id from stdin JSON when no session env var is set', () => {

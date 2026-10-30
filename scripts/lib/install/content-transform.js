@@ -4,6 +4,7 @@ const { stripPluginNamespace } = require('./plugin-namespace');
 const { adaptAntigravityAgent } = require('./antigravity-agent');
 const { adaptAntigravityRule } = require('./antigravity-rule');
 const { adaptCopilotAgent } = require('./copilot-agent');
+const { adaptCopilotRule } = require('./copilot-rule');
 const { disableOpenCodeHookPluginRegistration, getDisabledOpenCodePluginContent } = require('./hook-consent');
 
 function rewriteCopilotWorkflowPaths(content, sourceRelativePath) {
@@ -52,6 +53,9 @@ function transformInstallContent(operation, content) {
   }
   if (operation.contentTransform === 'copilot-workflow-paths') {
     return rewriteCopilotWorkflowPaths(content, operation.sourceRelativePath);
+  }
+  if (operation.contentTransform === 'copilot-rule-frontmatter') {
+    return adaptCopilotRule(content, operation.sourceRelativePath);
   }
   if (operation.contentTransform === 'opencode-disable-ecc-hooks') {
     return transformInstallContent({ ...operation, contentTransform: 'opencode-home-skills-path' },

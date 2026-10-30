@@ -2036,6 +2036,9 @@ impl StateStore {
             .into_iter()
             .map(|session| (session.id, session.task))
             .collect::<HashMap<_, _>>();
+        let mut persisted_event_owner = self
+            .conn
+            .prepare("SELECT session_id FROM tool_log WHERE hook_event_id = ?1")?;
 
         for line in reader.lines() {
             let line = line?;
@@ -2051,6 +2054,25 @@ impl StateStore {
                 || row.session_id.trim().is_empty()
                 || row.tool_name.trim().is_empty()
             {
+                continue;
+            }
+            // The shared Claude tool-activity feed can contain sessions that
+            // were never registered with ECC2 (for example, an existing
+            // standalone Claude Code session). tool_log.session_id has a
+            // foreign key to sessions(id), so ignore those external records
+            // without making the entire sessions/status command fail.
+            // Do this before deduplication: an unknown session must not
+            // reserve an event id for an ECC2-owned session.
+            if !session_tasks.contains_key(&row.session_id) {
+                continue;
+            }
+            // A session registered after an earlier sync must not steal an
+            // event ID already persisted for another session, or suppress the
+            // owner's later row when this feed is replayed.
+            let persisted_owner = persisted_event_owner
+                .query_row([&row.id], |record| record.get::<_, String>(0))
+                .optional()?;
+            if persisted_owner.is_some_and(|owner| owner != row.session_id) {
                 continue;
             }
             if !seen_event_ids.insert(row.id.clone()) {
@@ -6241,6 +6263,106 @@ mod tests {
         );
         assert_eq!(logs.entries[1].trigger_summary, "sync tools");
 
+        Ok(())
+    }
+
+    #[test]
+    fn sync_tool_activity_metrics_skips_sessions_not_registered_with_ecc2() -> Result<()> {
+        let tempdir = TestDir::new("store-unregistered-tool-activity")?;
+        let db = StateStore::open(&tempdir.path().join("state.db"))?;
+        let now = Utc::now();
+        db.insert_session(&Session {
+            id: "ecc-owned".to_string(),
+            task: "registered task".to_string(),
+            project: "workspace".to_string(),
+            task_group: "general".to_string(),
+            agent_type: "claude".to_string(),
+            working_dir: PathBuf::from("/tmp"),
+            state: SessionState::Running,
+            pid: None,
+            worktree: None,
+            created_at: now,
+            updated_at: now,
+            last_heartbeat_at: now,
+            metrics: SessionMetrics::default(),
+        })?;
+
+        let metrics_path = tempdir.path().join("tool-activity.jsonl");
+        fs::write(
+            &metrics_path,
+            concat!(
+                "{\"id\":\"owned-1\",\"session_id\":\"standalone-claude\",\"tool_name\":\"Write\",\"file_paths\":[\"outside.txt\"]}\n",
+                "{\"id\":\"owned-1\",\"session_id\":\"ecc-owned\",\"tool_name\":\"Read\",\"file_paths\":[\"inside.txt\"]}\n"
+            ),
+        )?;
+
+        // The orphan deliberately shares the owned event ID, so filtering
+        // after deduplication would incorrectly hide the registered event.
+        // Previously, the first row violated tool_log.session_id's FK and
+        // prevented sessions/status from reading any valid ECC2 sessions.
+        db.sync_tool_activity_metrics(&metrics_path)?;
+        db.sync_tool_activity_metrics(&metrics_path)?;
+        let known = db.get_session("ecc-owned")?.expect("registered session");
+        assert_eq!(known.metrics.tool_calls, 1);
+        assert_eq!(known.metrics.files_changed, 1);
+        let logs = db.query_tool_logs("ecc-owned", 1, 10)?;
+        assert_eq!(logs.total, 1);
+        assert_eq!(logs.entries[0].tool_name, "Read");
+        let total_logs = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM tool_log", [], |r| r.get::<_, i64>(0))?;
+        assert_eq!(total_logs, 1);
+        assert!(db.get_session("standalone-claude")?.is_none());
+
+        // Registration must not let the first row steal an event already
+        // persisted for another session while this same feed remains intact.
+        let registered_later = Session {
+            id: "standalone-claude".to_string(),
+            ..known
+        };
+        db.insert_session(&registered_later)?;
+        db.sync_tool_activity_metrics(&metrics_path)?;
+        db.sync_tool_activity_metrics(&metrics_path)?;
+        let owner = db.get_session("ecc-owned")?.expect("persisted event owner");
+        assert_eq!(owner.metrics.tool_calls, 1);
+        assert_eq!(owner.metrics.files_changed, 1);
+        let conflicting = db
+            .get_session("standalone-claude")?
+            .expect("registered later");
+        assert_eq!(conflicting.metrics.tool_calls, 0);
+        assert_eq!(conflicting.metrics.files_changed, 0);
+        assert_eq!(db.query_tool_logs("ecc-owned", 1, 10)?.total, 1);
+        assert_eq!(db.query_tool_logs("standalone-claude", 1, 10)?.total, 0);
+
+        // A distinct event for the newly registered session still imports.
+        fs::write(
+            &metrics_path,
+            concat!(
+                "{\"id\":\"external-1\",\"session_id\":\"standalone-claude\",\"tool_name\":\"Write\",\"file_paths\":[\"outside.txt\"]}\n",
+                "{\"id\":\"owned-1\",\"session_id\":\"ecc-owned\",\"tool_name\":\"Read\",\"file_paths\":[\"inside.txt\"]}\n"
+            ),
+        )?;
+        db.sync_tool_activity_metrics(&metrics_path)?;
+        db.sync_tool_activity_metrics(&metrics_path)?;
+        db.sync_tool_activity_metrics(&metrics_path)?;
+        let later = db
+            .get_session("standalone-claude")?
+            .expect("registered later");
+        assert_eq!(later.metrics.tool_calls, 1);
+        assert_eq!(later.metrics.files_changed, 1);
+        let later_logs = db.query_tool_logs("standalone-claude", 1, 10)?;
+        assert_eq!(later_logs.total, 1);
+        assert_eq!(later_logs.entries[0].tool_name, "Write");
+        let total_logs = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM tool_log", [], |r| r.get::<_, i64>(0))?;
+        assert_eq!(total_logs, 2);
+        let violations =
+            db.conn
+                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get::<_, i64>(0)
+                })?;
+        assert_eq!(violations, 0);
         Ok(())
     }
 

@@ -141,12 +141,12 @@ Instead of rebuilding that process in every prompt, you install it once and make
 
 ECC is MIT-licensed open source. It works best with Claude Code today, has native Codex and Qoder plugin paths, and provides capability-limited adapters for Cursor, OpenCode, Gemini, Zed, GitHub Copilot, Antigravity, Qwen, and other harnesses. See the [support status matrix](#platform-support) before assuming feature parity.
 
-Access to 71 agents, 313 skills, and 98 legacy command shims, plus hooks, rules, memory, continuous learning, and AgentShield security scanning. The agents are specialized for planning, review, build repair, security, architecture, and domain work.
+Access to 71 agents, 314 skills, and 98 legacy command shims, plus hooks, rules, memory, continuous learning, and AgentShield security scanning. The agents are specialized for planning, review, build repair, security, architecture, and domain work.
 
 | Included         |       Count | What it gives you                                                                    |
 | ---------------- | ----------: | ------------------------------------------------------------------------------------ |
 | Agents           |   71 agents | Planning, review, build repair, security, architecture, and domain work              |
-| Skills           |  313 skills | TDD, research, security, docs, frontend, data, ML, operations, and more              |
+| Skills           |  314 skills | TDD, research, security, docs, frontend, data, ML, operations, and more              |
 | Commands         | 98 commands | Convenient entry points while ECC moves to a skills-first surface                    |
 | Hooks and memory |     Runtime | Enforcement, session summaries, continuous learning, instincts, and context controls |
 | Rules            |   Selective | Always-loaded standards you choose by language or project                            |
@@ -861,7 +861,7 @@ Stable graduation of the 2.0 line: control-pane substrate, worktree lifecycle se
 ```text
 ECC/
 |-- agents/           # 71 specialized subagents for delegation
-|-- skills/           # 313 reusable workflows loaded on demand
+|-- skills/           # 314 reusable workflows loaded on demand
 |-- commands/         # 98 maintained slash-command shims
 |-- rules/            # opt-in common and language standards
 |-- hooks/            # runtime automation and enforcement
@@ -1332,7 +1332,7 @@ Treat `stable`, `beta`, `experimental`, and `instruction-only` below as capabili
 | Cursor | Beta project adapter | Selective installer into `.cursor/` | Agent discovery varies by Cursor build; hook events use profile-gated dispatchers, but full Claude feature parity is not claimed. |
 | OpenCode | Beta built plugin | Build plugin, then selective installer | ECC ships a subset of the catalog; connect a provider and select a model in OpenCode ([#2617](https://github.com/affaan-m/ECC/issues/2617)). |
 | GitHub Copilot Chat | Instruction-only | Checked-in instructions and prompt files | ECC hooks are not adapted. |
-| GitHub Copilot CLI | Beta project adapter | `--target copilot` places skills and adapted agents in `.github/` | ECC hooks, rules, and command shims are not installed by this target. |
+| GitHub Copilot CLI | Beta project adapter | `--target copilot` places skills, adapted agents, and converted rules in `.github/` | ECC hooks and command shims are not installed by this target. |
 | Gemini, Zed, Antigravity, Qwen, Hermes, OpenClaw, Kimi, CodeBuddy, JoyCode | Experimental/minimal adapters | Harness-specific selective target | File placement and instruction portability are tested; full Claude feature parity is not claimed. |
 
 <details>
@@ -1805,8 +1805,10 @@ inventory to see what this checkout installs; a count is not a capability grant.
 Claude-only agent frontmatter (`model`, `tools`, `color`) is dropped during the
 copy: Copilot resolves the model from your own configuration, and it governs
 tool access per session through `--allow-tool`/`--deny-tool` rather than through
-agent frontmatter. ECC's rules, commands, and hooks are not installed by this
-target.
+agent frontmatter. Rules are installed under `.github/instructions/ecc/` as
+`.instructions.md` files, with the Claude-style `paths:` frontmatter converted
+to Copilot's `applyTo:` glob list (rules without `paths` become `applyTo:
+"**"`). ECC's commands and hooks are not installed by this target.
 
 #### Feature coverage
 
@@ -1822,6 +1824,7 @@ target.
 | Commit message format | Per-task instruction in `settings.json` |
 | Skills | Native discovery in Copilot CLI (`.github/skills/`, `.agents/skills/`) |
 | Agents / delegation | Copilot CLI custom agents (`.github/agents/`, `--agent`) |
+| Rules | Path-specific instructions (`.github/instructions/ecc/`, `applyTo:` globs) |
 | Hooks / automation | ECC's hooks are not ported (Copilot CLI has its own plugin hook system) |
 
 #### Limitations

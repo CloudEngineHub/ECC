@@ -41,7 +41,12 @@ function runCompact(envOverrides = {}) {
  * Returns { code, stdout, stderr }.
  */
 function runCompactWithInput(input, envOverrides = {}) {
-  const env = { ...process.env, ...envOverrides };
+  const env = {
+    ...process.env,
+    ECC_CONTEXT_WINDOW_TOKENS: '',
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: '',
+    ...envOverrides,
+  };
   const result = spawnSync('node', [compactScript], {
     encoding: 'utf8',
     input: typeof input === 'string' ? input : JSON.stringify(input),
@@ -830,10 +835,16 @@ function runTests() {
     const ctx = createContextContext();
     const transcript = writeTranscriptFixture(230000, 'claude-opus-4-5[1m]');
     try {
-      const silent = runCompactWithInput({ session_id: ctx.sessionId, transcript_path: transcript });
+      const silent = runCompactWithInput(
+        { session_id: ctx.sessionId, transcript_path: transcript },
+        { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '786432' }
+      );
       assert.strictEqual(silent.stdout.trim(), '', `230k on a 1M window must stay silent. Got: "${silent.stdout}"`);
       writeTranscriptTokens(transcript, 260000, 'claude-opus-4-5[1m]');
-      const fired = runCompactWithInput({ session_id: ctx.sessionId, transcript_path: transcript });
+      const fired = runCompactWithInput(
+        { session_id: ctx.sessionId, transcript_path: transcript },
+        { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '786432' }
+      );
       assert.ok(fired.stdout.includes('26% of 1M window'), `260k on a 1M window should fire. Got: "${fired.stdout}"`);
     } finally {
       try { fs.unlinkSync(transcript); } catch (_err) { /* ignore */ }
@@ -842,11 +853,46 @@ function runTests() {
   })) passed++;
   else failed++;
 
+  for (const [label, nativeBudget, explicitThreshold, shouldRemind] of [
+    ['a smaller valid native budget caps the default reminder', '200000', '', true],
+    ['a malformed native budget does not cap the default reminder', '200000tokens', '', false],
+    ['a fractional native budget does not cap the default reminder', '200000.5', '', false],
+    ['an unsafe native integer does not cap the default reminder', '9007199254740992', '', false],
+    ['a larger native budget cannot enlarge the default reminder', '2000000', '', false],
+    ['an explicit later threshold remains intentional policy', '200000', '250000', false],
+    ['an explicit earlier threshold remains intentional policy', '200000', '100000', true],
+    ['an explicit zero still disables the context reminder', '200000', '0', false],
+  ]) {
+    if (test(label, () => {
+      const ctx = createContextContext();
+      const transcript = writeTranscriptFixture(180000, 'claude-opus-4-5[1m]');
+      try {
+        const result = runCompactWithInput(
+          { session_id: ctx.sessionId, transcript_path: transcript },
+          { CLAUDE_CODE_AUTO_COMPACT_WINDOW: nativeBudget, COMPACT_CONTEXT_THRESHOLD: explicitThreshold, COMPACT_THRESHOLD: '50' },
+        );
+        assert.strictEqual(result.code, 0, result.stderr);
+        if (shouldRemind) {
+          assert.ok(result.stdout.includes('18% of 1M window'), `Keep capacity truthful while warning before compaction: ${result.stdout}`);
+        } else {
+          assert.strictEqual(result.stdout.trim(), '', `No default or tool-count reminder expected: ${result.stdout}`);
+        }
+      } finally {
+        fs.unlinkSync(transcript);
+        ctx.cleanup();
+      }
+    })) passed++;
+    else failed++;
+  }
+
   if (test('treats >200k observed tokens as a 1M window even without the [1m] marker', () => {
     const ctx = createContextContext();
     const transcript = writeTranscriptFixture(230000, 'claude-opus-4-5');
     try {
-      const result = runCompactWithInput({ session_id: ctx.sessionId, transcript_path: transcript });
+      const result = runCompactWithInput(
+        { session_id: ctx.sessionId, transcript_path: transcript },
+        { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '786432' }
+      );
       // 230k would exceed the 160k standard threshold, but the observed size
       // implies a 1M window whose 250k default threshold is not reached yet.
       assert.strictEqual(result.stdout.trim(), '', `Expected 1M-window inference to keep run silent. Got: "${result.stdout}"`);
