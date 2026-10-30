@@ -144,8 +144,8 @@ function resolveContextWindow(tokens, model) {
 
   // Explicit window override wins: 400k models (e.g. Opus 4.x) match neither the
   // 200k default nor the 1M marker and would otherwise report ~double usage (#2290).
-  const explicitWindow = Number.parseInt(env.ECC_CONTEXT_WINDOW_TOKENS || '', 10);
-  if (Number.isInteger(explicitWindow) && explicitWindow > 0) {
+  const explicitWindow = Number(env.ECC_CONTEXT_WINDOW_TOKENS || '');
+  if (Number.isSafeInteger(explicitWindow) && explicitWindow > 0) {
     return { windowTokens: explicitWindow, inferred: false };
   }
 
@@ -170,8 +170,8 @@ function resolveContextWindow(tokens, model) {
   // trigger point (e.g. 786432 on a 1M-window model), not the context window
   // size. Honor it only as a last-resort fallback so it cannot mask the [1m]
   // marker, known large-window families, or >200k observed tokens above.
-  const autoCompactWindow = Number.parseInt(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '', 10);
-  if (Number.isInteger(autoCompactWindow) && autoCompactWindow > 0) {
+  const autoCompactWindow = Number(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '');
+  if (Number.isSafeInteger(autoCompactWindow) && autoCompactWindow > 0) {
     return { windowTokens: autoCompactWindow, inferred: false };
   }
 
@@ -203,7 +203,8 @@ function isContextWindowInferred(tokens, model) {
 /**
  * Resolve the context-size suggestion threshold (tokens).
  * `COMPACT_CONTEXT_THRESHOLD=0` disables the context signal entirely;
- * other invalid values fall back to the window-scaled default.
+ * other invalid values fall back to the window-scaled default, capped at
+ * 80 percent of a valid native compaction budget when that is earlier.
  */
 function resolveContextThreshold(env, windowTokens) {
   const raw = env && env.COMPACT_CONTEXT_THRESHOLD;
@@ -217,7 +218,13 @@ function resolveContextThreshold(env, windowTokens) {
     }
   }
 
-  return windowTokens >= LARGE_CONTEXT_WINDOW_TOKENS ? DEFAULT_CONTEXT_THRESHOLD_LARGE : DEFAULT_CONTEXT_THRESHOLD_STANDARD;
+  const defaultThreshold = windowTokens >= LARGE_CONTEXT_WINDOW_TOKENS ? DEFAULT_CONTEXT_THRESHOLD_LARGE : DEFAULT_CONTEXT_THRESHOLD_STANDARD;
+  const nativeBudget = Number(env && env.CLAUDE_CODE_AUTO_COMPACT_WINDOW);
+  if (!Number.isSafeInteger(nativeBudget) || nativeBudget <= 0) return defaultThreshold;
+  // Keep the standard 160k/200k headroom before native compaction, without
+  // changing model-capacity evidence or an explicit reminder policy above.
+  const nativeThreshold = Math.max(1, Math.floor(nativeBudget * (DEFAULT_CONTEXT_THRESHOLD_STANDARD / STANDARD_CONTEXT_WINDOW_TOKENS)));
+  return Math.min(defaultThreshold, nativeThreshold);
 }
 
 /**

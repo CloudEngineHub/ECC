@@ -291,6 +291,30 @@ function runTests() {
   }) ? passed++ : failed++);
   }
 
+  for (const nativeBudget of ['200000tokens', '200000.5', '9007199254740992']) {
+    (test(`invalid native budget ${nativeBudget} does not trigger a summary from inferred capacity`, () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-session-invalid-budget-'));
+      try {
+        const uuid = '12345678-1234-4234-8234-123456789abc';
+        const transcript = path.join(home, `${uuid}.jsonl`);
+        fs.writeFileSync(transcript, [
+          JSON.stringify({ type: 'user', content: 'Retain mechanical resume state with an invalid budget' }),
+          JSON.stringify({ type: 'assistant', message: { model: 'unknown-model', content: [], usage: { input_tokens: 180000 } } }),
+        ].join('\n') + '\n');
+        const res = runHook(home, transcript, {
+          ECC_CONTEXT_WINDOW_TOKENS: '', CLAUDE_CODE_AUTO_COMPACT_WINDOW: nativeBudget,
+          ECC_LLM_SUMMARY_INTERVAL: '50', ECC_LLM_SUMMARY_CONTEXT_THRESHOLD: '20',
+          ECC_HOOK_DEADLINE_MS: '1', ECC_SKIP_LLM_SUMMARY: '', ECC_LLM_SUMMARY_SUBPROCESS: '',
+        });
+        assert.strictEqual(res.status, 0, res.stderr);
+        assert.doesNotMatch(res.stderr, /LLM summary triggered/);
+        assert.match(fs.readFileSync(sessionFileFor(home, uuid), 'utf8'), /Retain mechanical resume state with an invalid budget/);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    }) ? passed++ : failed++);
+  }
+
   (test('logs an explicit LLM disable as skipped and persists mechanical resume state', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-session-skip-'));
     try {

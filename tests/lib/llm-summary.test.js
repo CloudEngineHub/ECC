@@ -186,6 +186,10 @@ for (const [label, model, nativeBudget, explicitWindow, expected, tokens = 33000
   ['native 786k compaction receives a timely summary on a 1M model', 'claude-opus-4-5[1m]', '786432', '', 10, 710000],
   ['confirmed capacity remains usable without a native budget', 'claude-opus-4-5[1m]', '', '', 67],
   ['known model family also respects the earlier native budget', 'claude-fable-5', '400000', '', 18],
+  ['unknown capacity rejects a numeric native prefix', 'unknown-model', '200000tokens', '', null, 180000],
+  ['unknown capacity rejects a fractional native budget', 'unknown-model', '200000.5', '', null, 180000],
+  ['unknown capacity rejects an unsafe native integer', 'unknown-model', '9007199254740992', '', null, 180000],
+  ['invalid explicit prefix does not override a valid native budget', 'unknown-model', '400000', '200000tokens', 55, 180000],
 ]) {
   test(label, () => {
     const keys = ['ECC_CONTEXT_WINDOW_TOKENS', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW'];
