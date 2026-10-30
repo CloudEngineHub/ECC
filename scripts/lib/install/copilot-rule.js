@@ -76,7 +76,7 @@ function rewriteRuleLinks(body, label) {
 
   let fence = null;
   return body.split('\n').map(line => {
-    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)\r?$/);
     if (fence) {
       if (marker && marker[1][0] === fence.character
         && marker[1].length >= fence.length && marker[2].trim() === '') {

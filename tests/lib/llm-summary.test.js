@@ -167,11 +167,39 @@ test('returns null for transcript with no usage data', () => {
 });
 
 test('returns numeric percentage for transcript with usage data', () => {
-  const p = writeTranscript([assistantEntry('ok')]);
+  const entry = JSON.parse(assistantEntry('ok'));
+  entry.message.model = 'claude-opus-4-5[1m]';
+  const p = writeTranscript([JSON.stringify(entry)]);
   const pct = getContextRemainingPct(p);
   assert.ok(typeof pct === 'number');
   assert.ok(pct >= 0 && pct <= 100);
 });
+
+for (const [label, model, nativeBudget, explicitWindow, expected] of [
+  ['inferred window uses native compaction budget conservatively', 'unknown-model', '400000', '', 18],
+  ['unknown capacity without a budget stays unknown', 'unknown-model', '', '', null],
+  ['confirmed model window remains authoritative', 'claude-opus-4-5[1m]', '400000', '', 67],
+  ['explicit ECC window remains authoritative', 'claude-opus-4-5[1m]', '786432', '400000', 18],
+  ['invalid compaction budget does not certify an inferred window', 'unknown-model', 'invalid', '', null],
+]) {
+  test(label, () => {
+    const keys = ['ECC_CONTEXT_WINDOW_TOKENS', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW'];
+    const previous = keys.map(key => process.env[key]);
+    try {
+      process.env.ECC_CONTEXT_WINDOW_TOKENS = explicitWindow;
+      process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = nativeBudget;
+      const entry = JSON.parse(assistantEntry('preserve context'));
+      entry.message.model = model;
+      entry.message.usage.input_tokens = 330000;
+      assert.strictEqual(getContextRemainingPct(writeTranscript([JSON.stringify(entry)])), expected);
+    } finally {
+      keys.forEach((key, index) => {
+        if (previous[index] === undefined) delete process.env[key];
+        else process.env[key] = previous[index];
+      });
+    }
+  });
+}
 
 // --- generateSessionSummary ---
 console.log('\ngenerateSessionSummary:');

@@ -92,16 +92,21 @@ function extractConversationText(transcriptPath) {
 }
 
 /**
- * Read the context remaining percentage from a transcript's latest usage record.
- * Returns null when unavailable.
+ * Read the remaining context budget percentage for summary scheduling.
+ * An inferred capacity cannot certify remaining context. In that case, use
+ * an explicit native compaction budget conservatively, or return null.
  */
 function getContextRemainingPct(transcriptPath) {
   try {
-    const { readLatestContextTokens, resolveContextWindowTokens } = require('./transcript-context');
+    const { readLatestContextTokens, resolveContextWindow } = require('./transcript-context');
     const usage = readLatestContextTokens(transcriptPath);
     if (!usage) return null;
-    const windowTokens = resolveContextWindowTokens(usage.tokens, usage.model);
-    return Math.round((1 - usage.tokens / windowTokens) * 100);
+    const resolution = resolveContextWindow(usage.tokens, usage.model);
+    const budget = resolution.inferred
+      ? Number(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '')
+      : resolution.windowTokens;
+    if (!Number.isSafeInteger(budget) || budget <= 0) return null;
+    return Math.round((1 - usage.tokens / budget) * 100);
   } catch {
     return null;
   }

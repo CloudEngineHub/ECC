@@ -268,6 +268,13 @@ test('rule transform preserves longer fences and embedded alternate fence marker
   assert.ok(adapted.includes('Outside [link](../common/hooks.instructions.md).'));
 });
 
+test('rule transform preserves CRLF fenced examples and rewrites only prose links', () => {
+  const body = '````md\r\n```\r\n[example](../common/hooks.md)\r\n~~~\r\n````\r\nOutside [link](../common/hooks.md).\r\n';
+  const adapted = adaptCopilotRule(`---\r\npaths:\r\n  - "**/*.ts"\r\n---\r\n${body}`, 'rules/angular/coding-style.md');
+  assert.ok(adapted.includes('````md\r\n```\r\n[example](../common/hooks.md)\r\n~~~\r\n````'));
+  assert.ok(adapted.includes('Outside [link](../common/hooks.instructions.md).\r\n'));
+});
+
 test('unsupported source paths produce no operations', () => {
   const operations = planFor([
     { id: 'commands-core', paths: ['commands', 'scripts/harness-audit.js'] },
