@@ -21,6 +21,7 @@ const {
   DEFAULT_TRANSCRIPT_TAIL_BYTES,
   readFileTail,
   readLatestContextTokens,
+  resolveContextWindow,
   resolveContextWindowTokens,
   resolveContextThreshold,
   resolveContextInterval,
@@ -284,6 +285,36 @@ test('keeps the 200k default for unknown model ids at low token counts (no false
 test('treats an empty model id as standard window', () => {
   assert.strictEqual(resolveContextWindowTokens(100000, ''), STANDARD_CONTEXT_WINDOW_TOKENS);
 });
+
+// Pin both inputs so the precedence regression cannot depend on the harness
+// running this test. Restore every variable even when an assertion fails.
+for (const [label, tokens, model, explicitWindow, expectedWindow, inferred] of [
+  ['[1m] marker', 180000, 'claude-opus-4-5[1m]', undefined, 1000000, false],
+  ['known large-window family', 180000, 'claude-fable-5', undefined, 1000000, false],
+  ['observed tokens above 200k', 220000, 'unknown-model', undefined, 1000000, true],
+  ['explicit ECC override', 220000, 'claude-opus-4-5[1m]', '400000', 400000, false],
+  ['auto-compact fallback', 180000, 'unknown-model', undefined, 786432, false],
+  ['invalid ECC override with marker', 180000, 'claude-opus-4-5[1m]', 'invalid', 1000000, false],
+]) {
+  test(`${label} resolves correctly with an explicit auto-compact trigger`, () => {
+    const previousExplicit = process.env.ECC_CONTEXT_WINDOW_TOKENS;
+    const previousAutoCompact = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+    try {
+      if (explicitWindow === undefined) delete process.env.ECC_CONTEXT_WINDOW_TOKENS;
+      else process.env.ECC_CONTEXT_WINDOW_TOKENS = explicitWindow;
+      process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '786432';
+      assert.deepStrictEqual(resolveContextWindow(tokens, model), {
+        windowTokens: expectedWindow,
+        inferred,
+      });
+    } finally {
+      if (previousExplicit === undefined) delete process.env.ECC_CONTEXT_WINDOW_TOKENS;
+      else process.env.ECC_CONTEXT_WINDOW_TOKENS = previousExplicit;
+      if (previousAutoCompact === undefined) delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      else process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = previousAutoCompact;
+    }
+  });
+}
 
 // ── isContextWindowInferred ──
 console.log('\nisContextWindowInferred:');
