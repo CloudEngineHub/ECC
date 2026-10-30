@@ -252,8 +252,12 @@ To fail loudly on a malformed value instead of returning a boolean, use an asser
 
 ```typescript
 function assertIsStringArray(value: unknown): asserts value is string[] {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+  if (!Array.isArray(value)) {
     throw new TypeError('Expected an array of strings')
+  }
+  // Iteration visits sparse positions as undefined instead of skipping them.
+  for (const item of value) {
+    if (typeof item !== 'string') throw new TypeError('Expected an array of strings')
   }
 }
 ```
@@ -276,6 +280,8 @@ Runtime immutability (for example, `Object.freeze`) is for hot application bound
 
 The `try/catch` belongs where the caller can act on failure — not wrapped around every internal call in a stack of swallowed errors. Use async/await with `try/catch` and narrow `unknown` errors safely (per the coding-style rules).
 
+This endpoint example accepts non-empty IDs made of ASCII letters, digits, underscores, and hyphens, such as `u_1`. Validate that contract before constructing the path or making a request. Adapt the identifier grammar to the real API.
+
 ```typescript
 type User = { id: string; email: string }
 
@@ -289,7 +295,14 @@ function isUser(value: unknown): value is User {
   )
 }
 
+function assertUserId(userId: string): void {
+  if (typeof userId !== 'string' || userId.length === 0 || /[^A-Za-z0-9_-]/.test(userId)) {
+    throw new TypeError('Expected a user ID using letters, digits, "_" or "-"')
+  }
+}
+
 async function loadUser(userId: string): Promise<User> {
+  assertUserId(userId)
   const response = await fetch(`/users/${userId}`)
   if (!response.ok) {
     throw new Error(`Failed to load user ${userId}: ${response.status}`)
