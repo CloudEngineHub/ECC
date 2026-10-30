@@ -266,14 +266,15 @@ function runTests() {
     }
   }) ? passed++ : failed++);
 
-  (test('native compact budget triggers a summary without certifying an inferred window', () => {
+  for (const model of ['unknown-model', 'claude-opus-4-5[1m]']) {
+  (test(`native compact budget triggers a timely summary for ${model}`, () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-session-context-budget-'));
     try {
       const uuid = '12345678-1234-4234-8234-123456789abc';
       const transcript = path.join(home, `${uuid}.jsonl`);
       fs.writeFileSync(transcript, [
         JSON.stringify({ type: 'user', content: 'Preserve this task before native compaction' }),
-        JSON.stringify({ type: 'assistant', message: { model: 'unknown-model', content: [], usage: { input_tokens: 330000 } } })
+        JSON.stringify({ type: 'assistant', message: { model, content: [], usage: { input_tokens: 330000 } } })
       ].join('\n') + '\n');
       const res = runHook(home, transcript, {
         ECC_CONTEXT_WINDOW_TOKENS: '', CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400000',
@@ -288,6 +289,7 @@ function runTests() {
       fs.rmSync(home, { recursive: true, force: true });
     }
   }) ? passed++ : failed++);
+  }
 
   (test('logs an explicit LLM disable as skipped and persists mechanical resume state', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-session-skip-'));

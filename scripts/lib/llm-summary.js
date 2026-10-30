@@ -93,8 +93,9 @@ function extractConversationText(transcriptPath) {
 
 /**
  * Read the remaining context budget percentage for summary scheduling.
- * An inferred capacity cannot certify remaining context. In that case, use
- * an explicit native compaction budget conservatively, or return null.
+ * Use the earlier of confirmed capacity and a native compaction budget.
+ * With inferred capacity, only an explicit native budget can supply a safe
+ * scheduling boundary; otherwise return null rather than certify a guess.
  */
 function getContextRemainingPct(transcriptPath) {
   try {
@@ -102,9 +103,11 @@ function getContextRemainingPct(transcriptPath) {
     const usage = readLatestContextTokens(transcriptPath);
     if (!usage) return null;
     const resolution = resolveContextWindow(usage.tokens, usage.model);
+    const nativeBudget = Number(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '');
+    const hasNativeBudget = Number.isSafeInteger(nativeBudget) && nativeBudget > 0;
     const budget = resolution.inferred
-      ? Number(process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '')
-      : resolution.windowTokens;
+      ? (hasNativeBudget ? nativeBudget : 0)
+      : (hasNativeBudget ? Math.min(resolution.windowTokens, nativeBudget) : resolution.windowTokens);
     if (!Number.isSafeInteger(budget) || budget <= 0) return null;
     return Math.round((1 - usage.tokens / budget) * 100);
   } catch {
