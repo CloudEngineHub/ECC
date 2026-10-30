@@ -324,7 +324,8 @@ default.home.page=hello
 server.port=8080
 default.server.open_browser=true
 # Static files are served only from these directories (comma- or semicolon-separated),
-# Do not use the working directory or an ancestor as a static root. Default: static
+# Use real public directories without symlinked root components.
+# Do not expose the working directory or its ancestors. Default: static
 # server.static.dirs=static,public
 
 # Locale
@@ -371,7 +372,9 @@ The framework includes a programmatic wrapper around `java.util.logging` (JUL) t
 
 ## Static Files
 
-The built-in `HttpServer` serves static files only from the directories named by `server.static.dirs` (comma- or semicolon-separated) or, failing that, `server.static.dir`; the default is `static`. It rejects the working directory itself and its ancestors as static roots, logging a warning. Version 1.7.37 also permits configured roots outside the working directory, such as sibling directories; it does not enforce a descendants-only policy. Prefer a dedicated public-assets directory such as `static/`. Requests are rejected when they contain `.` or `..` segments, name hidden files or folders (anything starting with `.`, such as `.git` or `.env`), end in `.` or a space, or point at files in the project root. Resolved files must remain within the configured root, including after symlink resolution.
+The built-in `HttpServer` serves static files from the roots named by `server.static.dirs` (comma- or semicolon-separated) or, failing that, `server.static.dir`; the default is `static`. In 1.7.37, the working-directory/ancestor check compares normalized path names before resolving symlinks. It rejects ordinary roots such as `.` or `..`, but a configured root that symlinks to the project directory or an ancestor can pass that check. Sibling directories outside the working directory are also allowed; a descendants-only policy is not enforced.
+
+Use a real, dedicated public-assets directory such as `static/`, containing only files intended for public access. Check that the configured root and its parent path components do not symlink to a broader or private directory. Requests containing `.` or `..` segments, hidden names such as `.git` or `.env`, or names ending in `.` or a space are rejected. Candidate files must remain within the configured root's resolved path. That containment does not prevent project-root exposure when the configured root itself resolves there: the handler serves a matching static file before the later `isProjectRootFile` check. Do not rely on a blanket project-root-file denial with symlinked configured roots. See the [pinned v1.7.37 implementation](https://github.com/tinystruct/tinystruct/blob/089ec19022f3bb5d87f1e83e30b2034b24f7e77f/src/main/java/org/tinystruct/system/HttpServer.java#L569-L720).
 
 ## Red Flags & Anti-patterns
 
@@ -391,7 +394,7 @@ The built-in `HttpServer` serves static files only from the directories named by
 | CLI arg not visible | Pass with `--key value`; access via `getContext().getAttribute("--key")`. |
 | Two methods same path, wrong one fires | Set explicit `mode` (e.g., `HTTP_GET` vs `HTTP_POST`) to disambiguate. |
 | `bin/dispatcher` fails with "The action is not allowed to be executed." | The action has an HTTP-specific mode; it is not reachable from the CLI. Test it over HTTP. To support both transports, first separate HTTP-only dependencies from shared logic, then use `Mode.DEFAULT` for a CLI-compatible entry point. |
-| A static file returns 404 though it exists | Only `server.static.dirs` / `server.static.dir` (default `static/`) are served; hidden files, `..` paths and project-root files are always refused. |
+| A static file returns 404 though it exists | Check `server.static.dirs` / `server.static.dir` (default `static/`), forbidden request names, and resolved-root containment. Use a real public directory; symlinked configured roots can expose project or ancestor files before the project-root check. |
 | No log file is written | `FileHandler` is opt-in: add `java.util.logging.FileHandler` to `handlers`. Set `java.util.logging.FileHandler.pattern` or the file lands in `%h/java%u.log` (your home directory). |
 | `FINE` / debug messages never appear | Both gates must allow them: set `logging.level=FINE` (or a package override like `org.tinystruct.level=FINE`) and make sure the handler's `.level` is not stricter. |
 
