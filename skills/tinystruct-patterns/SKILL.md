@@ -12,14 +12,14 @@ Architecture and implementation patterns for building modules with the **tinystr
 
 ## Core Principle
 
-**CLI and HTTP are equal citizens.** Every transport-neutral `@Action` (one with no `mode`, i.e. `Mode.DEFAULT`) can be run from both a terminal and a web browser without modification. This "dual-mode" capability is the core design philosophy of tinystruct. An action with a transport-specific mode (`Mode.CLI`, `Mode.HTTP_GET`, `Mode.HTTP_POST`, ...) is deliberately bound to that transport: the framework rejects it from the other one with "The action is not allowed to be executed."
+**CLI and HTTP are equal citizens.** A transport-neutral `@Action` uses `Mode.DEFAULT` (or omits `mode`) and has no HTTP-only dependencies. Such an action can run from both a terminal and a web browser. `Mode.DEFAULT` removes the transport restriction; it does not make an HTTP-dependent method CLI-compatible. `Request` and `Response` parameters come from HTTP context attributes and remain null when those attributes are absent, as in an ordinary CLI invocation. Keep shared logic independent of HTTP objects, sessions, and uploads, and call it from transport-specific entry points when needed. This "dual-mode" capability is the core design philosophy of tinystruct. An action with a transport-specific mode (`Mode.CLI`, `Mode.HTTP_GET`, `Mode.HTTP_POST`, ...) is deliberately bound to that transport: the framework rejects it from the other one with "The action is not allowed to be executed."
 
 ## Primary Development Tool: `bin/dispatcher`
 
 **`bin/dispatcher` is the default, highest-priority tool for developing, running, testing, and debugging a tinystruct application — reach for it before an IDE run configuration, a hand-written `main()`, curl, or a browser.** Because transport-neutral `@Action` methods are dual-mode by design, `bin/dispatcher` lets you exercise routing, argument binding, and business logic directly from the terminal, with the fastest possible feedback loop and no server/browser required. Actions bound to an HTTP method (`Mode.HTTP_POST`, `Mode.HTTP_GET`, ...) cannot be reached from `bin/dispatcher`; test those through an HTTP client against the running server.
 
 ```bash
-# Run any @Action directly - the fastest way to verify a new action works
+# Run a CLI-compatible @Action directly to verify a new action
 # (the class must be imported; see --import or default.import.applications in application.properties)
 bin/dispatcher greet/James --import com.example.MyService
 bin/dispatcher echo --words "Praise the Lord"
@@ -106,7 +106,7 @@ bin/dispatcher.cmd text eol=crlf
 
 ## How It Works
 
-The tinystruct framework treats any method annotated with `@Action` as a routable endpoint. Without a `mode` it is reachable from both terminal and web environments; with `mode = Mode.CLI` or an HTTP mode such as `Mode.HTTP_POST` it is reachable only from that transport. Applications are created by extending `AbstractApplication`, which provides core lifecycle hooks like `init()` and access to the request `Context`.
+The tinystruct framework treats any method annotated with `@Action` as a routable endpoint. Without a `mode`, dispatch is not restricted to one transport, but its parameters and implementation still need to support that environment. Ordinary CLI calls do not supply HTTP `Request` or `Response` objects. With `mode = Mode.CLI` or an HTTP mode such as `Mode.HTTP_POST`, dispatch is restricted to that transport. Applications are created by extending `AbstractApplication`, which provides core lifecycle hooks like `init()` and access to the request `Context`.
 
 Routing is handled by the `ActionRegistry`, which automatically maps path segments to method arguments and injects dependencies. For data-only services, the native `Builder` and `Builders` components should be used for JSON serialization to maintain a zero-dependency footprint. The database layer uses `AbstractData` POJOs mapped to tables with `@Table`/`@Column` annotations or XML mapping files for CRUD operations without external ORM libraries. Missing tables can be created automatically with `database.autocreate=true`.
 
@@ -390,7 +390,7 @@ The built-in `HttpServer` serves static files only from the directories named by
 | Action not found at runtime | Ensure class is imported via `--import` or listed in `application.properties`. |
 | CLI arg not visible | Pass with `--key value`; access via `getContext().getAttribute("--key")`. |
 | Two methods same path, wrong one fires | Set explicit `mode` (e.g., `HTTP_GET` vs `HTTP_POST`) to disambiguate. |
-| `bin/dispatcher` fails with "The action is not allowed to be executed." | The action has an HTTP-specific mode; it is not reachable from the CLI. Test it over HTTP, or drop `mode` if it should be dual-mode. |
+| `bin/dispatcher` fails with "The action is not allowed to be executed." | The action has an HTTP-specific mode; it is not reachable from the CLI. Test it over HTTP. To support both transports, first separate HTTP-only dependencies from shared logic, then use `Mode.DEFAULT` for a CLI-compatible entry point. |
 | A static file returns 404 though it exists | Only `server.static.dirs` / `server.static.dir` (default `static/`) are served; hidden files, `..` paths and project-root files are always refused. |
 | No log file is written | `FileHandler` is opt-in: add `java.util.logging.FileHandler` to `handlers`. Set `java.util.logging.FileHandler.pattern` or the file lands in `%h/java%u.log` (your home directory). |
 | `FINE` / debug messages never appear | Both gates must allow them: set `logging.level=FINE` (or a package override like `org.tinystruct.level=FINE`) and make sure the handler's `.level` is not stricter. |
