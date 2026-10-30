@@ -167,8 +167,8 @@ test('returns null for transcript with no usage data', () => {
 });
 
 test('returns numeric percentage for transcript with usage data', () => {
-  const entry = JSON.parse(assistantEntry('ok'));
-  entry.message.model = 'claude-opus-4-5[1m]';
+  const parsed = JSON.parse(assistantEntry('ok'));
+  const entry = { ...parsed, message: { ...parsed.message, model: 'claude-opus-4-5[1m]' } };
   const p = writeTranscript([JSON.stringify(entry)]);
   const pct = getContextRemainingPct(p);
   assert.ok(typeof pct === 'number');
@@ -193,9 +193,11 @@ for (const [label, model, nativeBudget, explicitWindow, expected, tokens = 33000
     try {
       process.env.ECC_CONTEXT_WINDOW_TOKENS = explicitWindow;
       process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = nativeBudget;
-      const entry = JSON.parse(assistantEntry('preserve context'));
-      entry.message.model = model;
-      entry.message.usage.input_tokens = tokens;
+      const parsed = JSON.parse(assistantEntry('preserve context'));
+      const entry = {
+        ...parsed,
+        message: { ...parsed.message, model, usage: { ...parsed.message.usage, input_tokens: tokens } },
+      };
       assert.strictEqual(getContextRemainingPct(writeTranscript([JSON.stringify(entry)])), expected);
       if (model.includes('[1m]') || model === 'claude-fable-5') {
         const { resolveContextWindowTokens } = require('../../scripts/lib/transcript-context');

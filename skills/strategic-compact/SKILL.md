@@ -69,9 +69,11 @@ Environment variables:
 - `COMPACT_CONTEXT_INTERVAL` — Additional context tokens before the suggestion repeats (default: 60000)
 - `COMPACT_STATE_TTL_DAYS` — Days before stale per-session state files in the temp dir are swept (default: 14)
 - `ECC_CONTEXT_WINDOW_TOKENS` — Explicit context-window size, in tokens, overriding auto-detection. Set this for large-window models whose reported id lacks a `[1m]` marker (e.g. 400k Opus 4.x, or a new 1M-window model family) so the threshold scales to the real window instead of defaulting to 200k and overstating context usage.
-- `CLAUDE_CODE_AUTO_COMPACT_WINDOW` — Claude Code's native auto-compact trigger, which may be smaller than the model's context window. ECC uses it only as a last-resort fallback, after an explicit ECC override, a `[1m]` model marker, a known large-window model family, and inference from observed tokens above 200k. It is not an exact model-capacity declaration.
+- `CLAUDE_CODE_AUTO_COMPACT_WINDOW` — Claude Code's native auto-compact trigger, which may be smaller than the model's context window. For context-window resolution, ECC uses it only as a last-resort fallback, after an explicit ECC override, a `[1m]` model marker, a known large-window model family, and inference from observed tokens above 200k. It is not an exact model-capacity declaration.
 
 > Window precedence is: `ECC_CONTEXT_WINDOW_TOKENS`, then the `[1m]` marker, a known large-window model family, observed tokens above 200k, the native auto-compact fallback, and finally the inferred 200k default. Set `ECC_CONTEXT_WINDOW_TOKENS` when you know the actual window and automatic detection lacks that information; do not treat the native compact trigger as proof of model capacity.
+
+The Stop-hook summary scheduler protects resume state before compaction. It uses the earlier of confirmed capacity and a valid native compaction budget. When capacity is inferred, it uses only a valid native budget, or treats the remaining budget as unknown if none is provided. This scheduling boundary does not change model-capacity resolution or the `/compact` suggestion threshold.
 
 ## Compaction Decision Guide
 
