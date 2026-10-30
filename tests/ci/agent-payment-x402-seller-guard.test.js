@@ -213,12 +213,25 @@ for (const doc of DOCS) {
     try {
       const header = await s.sign();
       const payload = JSON.parse(Buffer.from(header['PAYMENT-SIGNATURE'], 'base64').toString());
-      const forged = { ...payload, payload: { ...payload.payload, signature: `${payload.payload.signature.slice(0, -4)}0000` } };
+      const signature = payload.payload.signature;
+      assert.match(signature, /^0x[0-9a-f]{130}$/i, 'the SDK returns a 65-byte ECDSA signature');
+      // r = 0 is outside the valid ECDSA scalar range. Changing only the tail
+      // can preserve r/s and merely normalize the recovery byte from 27 to 0.
+      const invalidSignature = `0x${'00'.repeat(32)}${signature.slice(66)}`;
+      const originalBytes = Buffer.from(signature.slice(2), 'hex');
+      const invalidBytes = Buffer.from(invalidSignature.slice(2), 'hex');
+      assert.equal(invalidBytes.length, originalBytes.length);
+      assert.notDeepEqual(invalidBytes, originalBytes, 'the forgery must change the signed scalar bytes');
+      assert.deepEqual(invalidBytes.subarray(32), originalBytes.subarray(32), 'preserve s and the recovery byte');
+      const forged = { ...payload, payload: { ...payload.payload, signature: invalidSignature } };
       const bad = await s.post({ 'PAYMENT-SIGNATURE': b64(forged) });
       assert.equal(bad.status, 402);
       assert.equal(h.redis.sets.length, 0, 'an unverified payment must not be claimed');
+      assert.equal(h.runs.length, 0, 'an unverified payment must not run the handler');
+      assert.equal(h.facilitator.settles, 0, 'an unverified payment must not settle');
       assert.equal((await s.post(header)).status, 200);
       assert.equal(h.runs.length, 1);
+      assert.equal(h.facilitator.settles, 1);
     } finally { await s.close(); }
   });
   add('fails closed when the store is offline or hangs: no handler run, no settlement', async () => {
