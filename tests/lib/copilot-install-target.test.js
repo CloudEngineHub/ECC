@@ -13,6 +13,7 @@ const path = require('path');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const { adaptCopilotAgent } = require(path.join(REPO_ROOT, 'scripts', 'lib', 'install', 'copilot-agent'));
+const { adaptCopilotRule } = require(path.join(REPO_ROOT, 'scripts', 'lib', 'install', 'copilot-rule'));
 const copilotAdapter = require(path.join(REPO_ROOT, 'scripts', 'lib', 'install-targets', 'copilot-project'));
 const { getInstallTargetAdapter } = require(path.join(REPO_ROOT, 'scripts', 'lib', 'install-targets', 'registry'));
 const { SUPPORTED_INSTALL_TARGETS } = require(path.join(REPO_ROOT, 'scripts', 'lib', 'install-manifests'));
@@ -50,6 +51,15 @@ const CLAUDE_AGENT = [
 function planFor(modules) {
   return copilotAdapter.planOperations({
     repoRoot: '/repo',
+    projectRoot: '/project',
+    homeDir: '/home/user',
+    modules,
+  });
+}
+
+function planForRepo(modules) {
+  return copilotAdapter.planOperations({
+    repoRoot: REPO_ROOT,
     projectRoot: '/project',
     homeDir: '/home/user',
     modules,
@@ -127,9 +137,139 @@ test('skills are planned into .github/skills with installed helper references', 
   );
 });
 
+test('rule transform converts paths frontmatter to applyTo', () => {
+  const source = [
+    '---',
+    'paths:',
+    '  - "**/*.component.ts"',
+    '  - "**/*.service.ts"',
+    '---',
+    '',
+    '# Angular Coding Style',
+    '',
+  ].join('\n');
+  const adapted = adaptCopilotRule(source, 'rules/angular/coding-style.md');
+  assert.match(adapted, /^---\n/);
+  assert.match(adapted, /applyTo: ["']\*\*\/\*\.component\.ts,\*\*\/\*\.service\.ts["']\n/);
+  assert.doesNotMatch(adapted, /^paths:/m);
+  assert.ok(adapted.includes('# Angular Coding Style'));
+});
+
+test('rule transform makes a rule without frontmatter global', () => {
+  const adapted = adaptCopilotRule('# Security\n\nAlways validate input.\n', 'rules/common/security.md');
+  assert.match(adapted, /^---\napplyTo: ["']\*\*["']\n---\n/);
+  assert.ok(adapted.endsWith('# Security\n\nAlways validate input.\n'));
+});
+
+test('rule transform makes a rule without paths global', () => {
+  const adapted = adaptCopilotRule('---\ndescription: General guidance\n---\nbody\n', 'rules/common/other.md');
+  assert.match(adapted, /^---\napplyTo: ["']\*\*["']\n---\nbody\n/);
+});
+
+test('rule transform rejects frontmatter that is not an object', () => {
+  assert.throws(
+    () => adaptCopilotRule('---\n- a\n- b\n---\nbody\n', 'rules/broken.md'),
+    /frontmatter must be an object/
+  );
+});
+
+test('rule transform rejects a non-list paths value', () => {
+  assert.throws(
+    () => adaptCopilotRule('---\npaths: not-a-list\n---\nbody\n', 'rules/broken.md'),
+    /"paths" must be a non-empty list of glob strings/
+  );
+});
+
+test('rule transform rejects an empty paths list', () => {
+  assert.throws(
+    () => adaptCopilotRule('---\npaths: []\n---\nbody\n', 'rules/broken.md'),
+    /"paths" must be a non-empty list of glob strings/
+  );
+});
+
+test('rule transform treats an immediately empty frontmatter block as global', () => {
+  const adapted = adaptCopilotRule('---\n---\n# Rule\n', 'rules/common/x.md');
+  assert.match(adapted, /^---\napplyTo: ["']\*\*["']\n---\n# Rule\n/);
+  assert.strictEqual(adapted.match(/^---$/gm).length, 2, 'must not leave stray delimiters in the body');
+});
+
+test('rule transform treats a whitespace-only frontmatter block as global', () => {
+  const adapted = adaptCopilotRule('---\n\n---\n# Rule\n', 'rules/common/x.md');
+  assert.match(adapted, /^---\napplyTo: ["']\*\*["']\n---\n# Rule\n/);
+  assert.strictEqual(adapted.match(/^---$/gm).length, 2, 'must not leave stray delimiters in the body');
+});
+
+test('rule transform rewrites links to installed rule files', () => {
+  const source = '---\npaths:\n  - "**/*.ts"\n---\nSee [common](../common/coding-style.md) and [anchor](../common/hooks.md#hooks).\n';
+  const adapted = adaptCopilotRule(source, 'rules/angular/coding-style.md');
+  assert.ok(adapted.includes('](../common/coding-style.instructions.md)'));
+  assert.ok(adapted.includes('](../common/hooks.instructions.md#hooks)'));
+});
+
+test('rule transform leaves links outside the installed rule set unchanged', () => {
+  const source = '---\npaths:\n  - "**/*.ts"\n---\n[docs](../../docs/guide.md) [readme](../README.md) [web](https://example.org/x.md) [self](#section) [abs](/rules/x.md)\n';
+  const adapted = adaptCopilotRule(source, 'rules/angular/coding-style.md');
+  assert.ok(adapted.includes('](../../docs/guide.md)'));
+  assert.ok(adapted.includes('](../README.md)'));
+  assert.ok(adapted.includes('(https://example.org/x.md)'));
+  assert.ok(adapted.includes('(#section)'));
+  assert.ok(adapted.includes('(/rules/x.md)'));
+});
+
+test('rule transform keeps fenced code examples unchanged', () => {
+  const source = '---\npaths:\n  - "**/*.ts"\n---\nOutside [link](../common/hooks.md).\n\n```md\n[example](../common/coding-style.md)\n```\n~~~\n[tildes](../common/patterns.md)\n~~~\n';
+  const adapted = adaptCopilotRule(source, 'rules/angular/coding-style.md');
+  assert.ok(adapted.includes('](../common/hooks.instructions.md)'));
+  assert.ok(adapted.includes('```md\n[example](../common/coding-style.md)\n```'));
+  assert.ok(adapted.includes('~~~\n[tildes](../common/patterns.md)\n~~~'));
+});
+
+test('rules are planned into .github/instructions/ecc as renamed instructions files', () => {
+  const operations = planForRepo([{ id: 'rules-core', paths: ['rules'] }]);
+  assert.ok(operations.length > 100);
+  const root = path.join('/project', '.github', 'instructions', 'ecc');
+  for (const operation of operations) {
+    assert.strictEqual(operation.contentTransform, 'copilot-rule-frontmatter');
+    assert.ok(operation.destinationPath.endsWith('.instructions.md'), operation.destinationPath);
+    const relative = path.relative(root, operation.destinationPath);
+    assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative), operation.destinationPath);
+    assert.ok(!/(^|[\\/])README\.instructions\.md$/i.test(operation.destinationPath), operation.destinationPath);
+  }
+  assert.ok(operations.some(operation => (
+    operation.destinationPath === path.join(root, 'angular', 'coding-style.instructions.md')
+    && operation.sourceRelativePath === 'rules/angular/coding-style.md'
+  )));
+});
+
+test('a rules subdirectory keeps its namespace under instructions/ecc', () => {
+  const operations = planForRepo([{ id: 'rules-core', paths: ['rules/angular'] }]);
+  assert.ok(operations.length > 0);
+  for (const operation of operations) {
+    const relative = path.relative(path.join('/project', '.github', 'instructions', 'ecc', 'angular'), operation.destinationPath);
+    assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative), operation.destinationPath);
+  }
+});
+
+test('single rule files retain language namespaces and distinct managed destinations', () => {
+  const operations = planForRepo([{ id: 'rules-core', paths: [
+    'rules/angular/coding-style.md', 'rules/typescript/coding-style.md'
+  ] }]);
+  assert.strictEqual(operations.length, 2);
+  assert.deepStrictEqual(operations.map(operation => operation.destinationPath), [
+    path.join('/project', '.github', 'instructions', 'ecc', 'angular', 'coding-style.instructions.md'),
+    path.join('/project', '.github', 'instructions', 'ecc', 'typescript', 'coding-style.instructions.md')
+  ]);
+});
+
+test('rule transform preserves longer fences and embedded alternate fence markers', () => {
+  const body = '````md\n```\n[example](../common/hooks.md)\n~~~\n````\nOutside [link](../common/hooks.md).\n';
+  const adapted = adaptCopilotRule(body, 'rules/angular/coding-style.md');
+  assert.ok(adapted.includes('````md\n```\n[example](../common/hooks.md)\n~~~\n````'));
+  assert.ok(adapted.includes('Outside [link](../common/hooks.instructions.md).'));
+});
+
 test('unsupported source paths produce no operations', () => {
   const operations = planFor([
-    { id: 'rules-core', paths: ['rules'] },
     { id: 'commands-core', paths: ['commands', 'scripts/harness-audit.js'] },
     { id: 'hooks-runtime', paths: ['hooks', 'scripts/hooks'] },
     { id: 'platform-configs', paths: ['.claude-plugin', '.codex', 'mcp-configs'] },
@@ -168,7 +308,7 @@ test('AGENTS.md and .agents are not installed by this target', () => {
 });
 
 test('traversal segments produce no planned operations', () => {
-  for (const value of ['agents/../../escape.md', 'skills/../escape.md', 'agents\\..\\..\\escape.md']) {
+  for (const value of ['agents/../../escape.md', 'skills/../escape.md', 'rules/../../escape.md', 'agents\\..\\..\\escape.md']) {
     assert.deepStrictEqual(planFor([{ id: 'agents-core', paths: [value] }]), []);
   }
 });
@@ -350,6 +490,79 @@ test('Copilot installs non-Markdown agent assets byte-for-byte while adapting Ma
     }
     assert.strictEqual(fs.readFileSync(path.join(agentRoot, 'architect.MD'), 'utf8'), CLAUDE_AGENT);
     assert.deepStrictEqual(fs.readFileSync(path.join(agentRoot, 'assets', 'icon.png')), binary);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test('Copilot installs rules as instructions and uninstall removes them', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const { createManifestInstallPlan, applyInstallPlan } = require('../../scripts/lib/install-executor');
+  const { uninstallInstalledStates } = require('../../scripts/lib/install-lifecycle');
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-copilot-rules-'));
+  try {
+    const homeDir = path.join(project, 'home');
+    const plan = createManifestInstallPlan({ target: 'copilot', moduleIds: ['rules-core'], projectRoot: project, homeDir, env: {} });
+    applyInstallPlan(plan);
+    const instructionsRoot = path.join(project, '.github', 'instructions', 'ecc');
+    const angular = fs.readFileSync(path.join(instructionsRoot, 'angular', 'coding-style.instructions.md'), 'utf8');
+    assert.match(angular, /^---\napplyTo: ["']\*\*\/\*\.component\.ts/);
+    assert.doesNotMatch(angular, /^paths:/m);
+    assert.ok(angular.includes('](../common/coding-style.instructions.md)'));
+    assert.ok(!angular.includes('](../common/coding-style.md)'));
+    const security = fs.readFileSync(path.join(instructionsRoot, 'common', 'security.instructions.md'), 'utf8');
+    assert.match(security, /^---\napplyTo: ["']\*\*["']\n---\n/);
+    assert.ok(!fs.existsSync(path.join(instructionsRoot, 'README.instructions.md')));
+    const options = { repoRoot: REPO_ROOT, projectRoot: project, homeDir, targets: ['copilot'], env: {} };
+    const uninstall = uninstallInstalledStates(options);
+    assert.strictEqual(uninstall.summary.errorCount, 0, JSON.stringify(uninstall));
+    assert.ok(!fs.existsSync(path.join(instructionsRoot, 'angular', 'coding-style.instructions.md')));
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('single-file rules survive install and repair without colliding or claiming user instructions', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const { createManifestInstallPlan, applyInstallPlan } = require('../../scripts/lib/install-executor');
+  const { repairInstalledStates, uninstallInstalledStates } = require('../../scripts/lib/install-lifecycle');
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-copilot-rule-files-'));
+  try {
+    const sourceRoot = path.join(temp, 'source');
+    const projectRoot = path.join(temp, 'project');
+    const homeDir = path.join(temp, 'home');
+    const languages = ['angular', 'typescript', 'python'];
+    fs.mkdirSync(path.join(sourceRoot, 'manifests'), { recursive: true });
+    fs.writeFileSync(path.join(sourceRoot, 'manifests', 'install-modules.json'), JSON.stringify({ version: 1, modules: [{
+      id: 'fixture', kind: 'rules', paths: languages.map(language => `rules/${language}/coding-style.md`),
+      targets: ['copilot'], dependencies: [],
+    }] }));
+    fs.writeFileSync(path.join(sourceRoot, 'manifests', 'install-profiles.json'), JSON.stringify({ version: 1, profiles: {} }));
+    for (const language of languages) {
+      const file = path.join(sourceRoot, 'rules', language, 'coding-style.md');
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `# ${language}\n`);
+    }
+    const instruction = language => path.join(projectRoot, '.github', 'instructions', 'ecc', language, 'coding-style.instructions.md');
+    fs.mkdirSync(path.dirname(instruction('python')), { recursive: true });
+    fs.writeFileSync(instruction('python'), 'USER INSTRUCTION\n');
+    const plan = createManifestInstallPlan({ sourceRoot, target: 'copilot', moduleIds: ['fixture'], projectRoot, homeDir, env: {} });
+    applyInstallPlan(plan);
+    const options = { repoRoot: sourceRoot, projectRoot, homeDir, targets: ['copilot'], env: {} };
+    fs.unlinkSync(instruction('typescript'));
+    const repair = repairInstalledStates(options);
+    assert.strictEqual(repair.summary.errorCount, 0, JSON.stringify(repair));
+    for (const language of ['angular', 'typescript']) {
+      assert.strictEqual(fs.readFileSync(instruction(language), 'utf8'), `---\napplyTo: "**"\n---\n# ${language}\n`);
+    }
+    assert.strictEqual(fs.readFileSync(instruction('python'), 'utf8'), 'USER INSTRUCTION\n');
+    const uninstall = uninstallInstalledStates(options);
+    assert.strictEqual(uninstall.summary.errorCount, 0, JSON.stringify(uninstall));
+    assert.ok(!fs.existsSync(instruction('angular')));
+    assert.ok(!fs.existsSync(instruction('typescript')));
+    assert.strictEqual(fs.readFileSync(instruction('python'), 'utf8'), 'USER INSTRUCTION\n');
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
